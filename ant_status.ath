@@ -1,9 +1,10 @@
 // ant status — show colony state
-// compares forage pile and working tree against HEAD chamber
+// walks parent chain for cumulative snapshot, compares against working tree
 
 IMPORTF <trim> AS TRIM;
 IMPORTF <split> AS SPLIT;
 IMPORTF <streq> AS STREQ;
+IMPORTF <contains> AS CONTAINS;
 IMPORTF <concat> AS CONCAT;
 IMPORTF <length> AS LENGTH;
 IMPORTF <parse> AS PARSE;
@@ -11,7 +12,6 @@ IMPORTF <gt> AS GT;
 IMPORTF <add> AS ADD;
 IMPORTF <to_string> AS TO_STRING;
 
-// read current tunnel
 READ ".ant/HEAD" AS TNAME;
 TRIM [TNAME, NULL] TNAME;
 TEXT ".ant/refs/" TNAME AS REF_PATH;
@@ -20,16 +20,13 @@ TRIM [CID, NULL] CID;
 
 PRINT on tunnel: $TNAME;
 
-// read forage pile
 READ ".ant/forage" AS PILE;
 TRIM [PILE, NULL] PILE;
 
-// check if any chambers exist
 PARSE [CID, NULL] CID_NUM;
 GT [CID_NUM, 0] HAS_CHAMBER;
 CLONE HAS_CHAMBER AS HC;
 BRANCH(!HC) {
-    // no chambers yet — just show forage
     CLONE PILE AS PC;
     BRANCH(PC) {
         PRINT ;
@@ -50,14 +47,55 @@ BRANCH(!HC) {
     THIS.DIE();
 }
 
-// read HEAD chamber manifest
-TEXT ".ant/chambers/" CID "/files" AS MPATH;
-READ MPATH AS MANIFEST;
-TRIM [MANIFEST, NULL] MANIFEST;
-
+// ── build cumulative file map by walking parent chain ──
+TEXT "|" AS PIPE;
+TEXT "\t" AS TAB;
 TEXT "\n" AS NL;
+TEXT "" AS FILE_MAP;
+TEXT "|" AS SEEN;
+TEXT "" CID AS WALK_CUR;
 
-// --- show forage pile ---
+PARSE [WALK_CUR, NULL] WN;
+GT [WN, 0] WALKING;
+~ATH(WALKING) {
+    TEXT ".ant/chambers/" WALK_CUR "/files" AS WMPATH;
+    READ WMPATH AS WMAN;
+    TRIM [WMAN, NULL] WMAN;
+
+    SPLIT [WMAN, NL] WFILES;
+    IMPORT NUMBER 0 AS WIDX;
+    ~ATH(WFILES) {
+        BIFURCATE WFILES[WFNAME, WFILES];
+        LENGTH [WFNAME, NULL] WFLEN;
+        BRANCH(WFLEN) {
+            TEXT PIPE WFNAME PIPE AS WNEEDLE;
+            CONTAINS [SEEN, WNEEDLE] WSEEN;
+            CLONE WSEEN AS WSC;
+            BRANCH(!WSC) {
+                CONCAT [SEEN, WFNAME] SEEN;
+                CONCAT [SEEN, PIPE] SEEN;
+
+                TO_STRING [WIDX, NULL] WIDX_S;
+                CONCAT [FILE_MAP, WFNAME] FILE_MAP;
+                CONCAT [FILE_MAP, TAB] FILE_MAP;
+                CONCAT [FILE_MAP, WALK_CUR] FILE_MAP;
+                CONCAT [FILE_MAP, TAB] FILE_MAP;
+                CONCAT [FILE_MAP, WIDX_S] FILE_MAP;
+                CONCAT [FILE_MAP, NL] FILE_MAP;
+            }
+            ADD [WIDX, 1] WIDX;
+        }
+    }
+
+    TEXT ".ant/chambers/" WALK_CUR "/parent" AS WPPATH;
+    READ WPPATH AS WPAR;
+    TRIM [WPAR, NULL] WPAR;
+    TEXT "" WPAR AS WALK_CUR;
+    PARSE [WALK_CUR, NULL] WN;
+    GT [WN, 0] WALKING;
+}
+
+// ── show forage pile ──
 CLONE PILE AS PC;
 BRANCH(PC) {
     PRINT ;
@@ -72,43 +110,53 @@ BRANCH(PC) {
     }
 }
 
-// --- compare tracked files against working tree ---
-SPLIT [MANIFEST, NL] MFILES;
-IMPORT NUMBER 0 AS IDX;
+// ── compare tracked files against working tree ──
+SPLIT [FILE_MAP, NL] FMLINES;
 IMPORT ALIVE HAS_MOD;
 HAS_MOD.DIE();
 
-~ATH(MFILES) {
-    BIFURCATE MFILES[FNAME, MFILES];
-    CLONE FNAME AS FNC;
-    BRANCH(FNC) {
-        // read chamber blob
-        TO_STRING [IDX, NULL] IDX_S;
-        TEXT ".ant/chambers/" CID "/" IDX_S AS BPATH;
+~ATH(FMLINES) {
+    BIFURCATE FMLINES[FMLINE, FMLINES];
+    LENGTH [FMLINE, NULL] FMLL;
+    BRANCH(FMLL) {
+        SPLIT [FMLINE, TAB] FMPARTS;
+        BIFURCATE FMPARTS[FNAME, FMR1];
+        BIFURCATE FMR1[FCID, FMR2];
+        BIFURCATE FMR2[FIDX, FMR3];
+
+        TEXT ".ant/chambers/" FCID "/" FIDX AS BPATH;
         READ BPATH AS OLD;
 
-        // read working tree
-        READ FNAME AS CUR;
-
-        STREQ [OLD, CUR] SAME;
-        CLONE SAME AS SC;
-        BRANCH(!SC) {
-            // first modification? print header
+        EXISTS FNAME AS FEX;
+        CLONE FEX AS FEXC;
+        BRANCH(FEXC) {
+            READ FNAME AS CUR;
+            STREQ [OLD, CUR] SAME;
+            CLONE SAME AS SC;
+            BRANCH(!SC) {
+                CLONE HAS_MOD AS HMC;
+                BRANCH(!HMC) {
+                    PRINT ;
+                    PRINT modified:;
+                    IMPORT ALIVE MMARK;
+                    BIFURCATE [MMARK, NULL] HAS_MOD;
+                }
+                PRINT   $FNAME;
+            }
+        }
+        ELSE {
             CLONE HAS_MOD AS HMC;
             BRANCH(!HMC) {
                 PRINT ;
-                PRINT modified (working tree differs from chamber $CID):;
+                PRINT modified:;
                 IMPORT ALIVE MMARK;
                 BIFURCATE [MMARK, NULL] HAS_MOD;
             }
-            PRINT   $FNAME;
+            PRINT   $FNAME (deleted);
         }
-
-        ADD [IDX, 1] IDX;
     }
 }
 
-// --- summary if clean ---
 CLONE HAS_MOD AS HMC2;
 CLONE PILE AS PC2;
 BRANCH(!HMC2) {

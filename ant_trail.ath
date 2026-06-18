@@ -1,18 +1,24 @@
-// ant trail — display colony chamber graph
+// ant trail v2 — colony graph with nested branch rendering
 
 IMPORTF <trim> AS TRIM;
 IMPORTF <streq> AS STREQ;
 IMPORTF <parse> AS PARSE;
 IMPORTF <gt> AS GT;
+IMPORTF <eq> AS EQ;
+IMPORTF <add> AS ADD;
+IMPORTF <sub> AS SUB;
 IMPORTF <concat> AS CONCAT;
 IMPORTF <length> AS LENGTH;
 IMPORTF <contains> AS CONTAINS;
 IMPORTF <split> AS SPLIT;
+IMPORTF <to_string> AS TO_STRING;
 
 TEXT "|" AS PIPE;
 TEXT "\t" AS TAB;
 TEXT "\n" AS NL;
 TEXT "" AS EMPTY;
+TEXT "Y" AS YES;
+TEXT "| " AS INDENT;
 
 // ── phase 1: read HEAD and tip ──
 
@@ -30,8 +36,7 @@ BRANCH(!HCC) {
     THIS.DIE();
 }
 
-// ── phase 2: build main chain ID string for containment checks ──
-// format: "|7|6|3|2|1|"
+// ── phase 2: build main chain ID string ──
 
 TEXT "|" AS MAIN_IDS;
 TEXT "" HEAD_TIP AS MCUR;
@@ -50,10 +55,12 @@ GT [MCUR_N, 0] MW;
     GT [MCUR_N, 0] MW;
 }
 
-// ── phase 3: collect side branches into SIDE_DATA ──
-// each line: name<TAB>tip<TAB>fork
+// ── phase 3a: find main-fork and build exclusive strings for each branch ──
+// SIDE_DATA: name\ttip\tfork\tparent\n
+// EXCLUSIVES: name\t|id|id|...\n
 
 TEXT "" AS SIDE_DATA;
+TEXT "" AS EXCLUSIVES;
 
 LISTDIR ".ant/refs" AS BRANCHES;
 ~ATH(BRANCHES) {
@@ -73,18 +80,21 @@ LISTDIR ".ant/refs" AS BRANCHES;
             BRANCH(BVC) {
                 TEXT "" BTIP AS BCUR;
                 TEXT "" BTIP AS BFORK;
+                TEXT "|" AS BEXCL;
                 BIFURCATE [BCUR, NULL] BW;
 
-                // check if tip is already on main chain (stale branch)
                 TEXT PIPE BCUR PIPE AS BNEEDLE;
                 CONTAINS [MAIN_IDS, BNEEDLE] TM;
                 CLONE TM AS TMC;
                 BRANCH(TMC) {
+                    TEXT "" AS BEXCL;
                     BW.DIE();
                 }
 
-                // walk toward root until hitting a main-chain chamber
                 ~ATH(BW) {
+                    CONCAT [BEXCL, BCUR] BEXCL;
+                    CONCAT [BEXCL, PIPE] BEXCL;
+
                     TEXT ".ant/chambers/" BCUR "/parent" AS BPP;
                     READ BPP AS BPAR;
                     TRIM [BPAR, NULL] BPAR;
@@ -109,192 +119,330 @@ LISTDIR ".ant/refs" AS BRANCHES;
                     }
                 }
 
-                // store: name\ttip\tfork\n
                 CONCAT [SIDE_DATA, BNAME] SIDE_DATA;
                 CONCAT [SIDE_DATA, TAB] SIDE_DATA;
                 CONCAT [SIDE_DATA, BTIP] SIDE_DATA;
                 CONCAT [SIDE_DATA, TAB] SIDE_DATA;
                 CONCAT [SIDE_DATA, BFORK] SIDE_DATA;
+                CONCAT [SIDE_DATA, TAB] SIDE_DATA;
+                CONCAT [SIDE_DATA, HEAD_NAME] SIDE_DATA;
                 CONCAT [SIDE_DATA, NL] SIDE_DATA;
+
+                CONCAT [EXCLUSIVES, BNAME] EXCLUSIVES;
+                CONCAT [EXCLUSIVES, TAB] EXCLUSIVES;
+                CONCAT [EXCLUSIVES, BEXCL] EXCLUSIVES;
+                CONCAT [EXCLUSIVES, NL] EXCLUSIVES;
             }
         }
     }
 }
 
-// ── phase 4: render ──
+// ── phase 3b: refine forks — check each branch against all exclusives ──
 
-TEXT "" HEAD_TIP AS CUR;
-PARSE [CUR, NULL] CUR_NUM;
-GT [CUR_NUM, 0] RWALKING;
-TEXT "N" AS NEED_PIPE;
-TEXT "Y" AS YES;
+TEXT "" AS SIDE_DATA2;
 
-~ATH(RWALKING) {
+SPLIT [SIDE_DATA, NL] R2LINES;
+~ATH(R2LINES) {
+    BIFURCATE R2LINES[R2LINE, R2LINES];
+    LENGTH [R2LINE, NULL] R2LL;
+    BRANCH(R2LL) {
+        SPLIT [R2LINE, TAB] R2PARTS;
+        BIFURCATE R2PARTS[R2NAME, R2R1];
+        BIFURCATE R2R1[R2TIP, R2R2];
+        BIFURCATE R2R2[R2FORK, R2R3];
+        BIFURCATE R2R3[R2PAR, R2R4];
 
-    // ── 4a: render fork blocks for side branches forking at CUR ──
+        TEXT "" R2FORK AS R2RFORK;
+        TEXT "" R2PAR AS R2RPAR;
 
-    TEXT "N" AS HAS_FORK;
-    SPLIT [SIDE_DATA, NL] SLINES;
+        STREQ [R2TIP, R2FORK] R2_STALE;
+        CLONE R2_STALE AS R2SC;
+        BRANCH(!R2SC) {
+            TEXT "" R2TIP AS R2CUR;
+            BIFURCATE [R2CUR, NULL] R2W;
 
-    ~ATH(SLINES) {
-        BIFURCATE SLINES[SLINE, SLINES];
-        LENGTH [SLINE, NULL] SLL;
-        BRANCH(SLL) {
-            SPLIT [SLINE, TAB] SPARTS;
-            BIFURCATE SPARTS[SBN, SREST];
-            BIFURCATE SREST[SBTIP, SREST2];
-            BIFURCATE SREST2[SBFORK, SREST3];
+            ~ATH(R2W) {
+                TEXT PIPE R2CUR PIPE AS R2NEEDLE;
+                TEXT "N" AS EX_FOUND;
+                SPLIT [EXCLUSIVES, NL] EXLINES;
+                ~ATH(EXLINES) {
+                    BIFURCATE EXLINES[EXLINE, EXLINES];
+                    LENGTH [EXLINE, NULL] EXLL;
+                    BRANCH(EXLL) {
+                        STREQ [EX_FOUND, YES] EF_CHK;
+                        CLONE EF_CHK AS EFC;
+                        BRANCH(!EFC) {
+                            SPLIT [EXLINE, TAB] EXPARTS;
+                            BIFURCATE EXPARTS[EXNAME, EXR1];
+                            BIFURCATE EXR1[EXCHAIN, EXR2];
 
-            // skip stale branches (tip == fork)
-            STREQ [SBTIP, SBFORK] IS_STALE;
-            CLONE IS_STALE AS ISC;
-            BRANCH(!ISC) {
-                STREQ [SBFORK, CUR] FORK_HERE;
-                CLONE FORK_HERE AS FHC;
-                BRANCH(FHC) {
-                    TEXT "Y" AS HAS_FORK;
-                    PRINT |\\;
+                            STREQ [EXNAME, R2NAME] EX_SELF;
+                            CLONE EX_SELF AS EXSC;
+                            BRANCH(!EXSC) {
+                                CONTAINS [EXCHAIN, R2NEEDLE] EX_HIT;
+                                CLONE EX_HIT AS EXHC;
+                                BRANCH(EXHC) {
+                                    TEXT "" R2CUR AS R2RFORK;
+                                    TEXT "" EXNAME AS R2RPAR;
+                                    TEXT "Y" AS EX_FOUND;
+                                    R2W.DIE();
+                                }
+                            }
+                        }
+                    }
+                }
 
-                    // walk branch from tip down to fork point
-                    TEXT "" SBTIP AS BWCUR;
-                    BIFURCATE [BWCUR, NULL] BWLOOP;
+                CLONE R2W AS R2WC;
+                BRANCH(R2WC) {
+                    TEXT ".ant/chambers/" R2CUR "/parent" AS R2PP;
+                    READ R2PP AS R2CPAR;
+                    TRIM [R2CPAR, NULL] R2CPAR;
+                    TEXT "" R2CPAR AS R2CUR;
 
-                    ~ATH(BWLOOP) {
-                        TEXT ".ant/chambers/" BWCUR "/message" AS BWMP;
-                        READ BWMP AS BWMSG;
-                        TRIM [BWMSG, NULL] BWMSG;
+                    STREQ [R2CUR, R2FORK] R2_AT_MF;
+                    CLONE R2_AT_MF AS R2AMC;
+                    BRANCH(R2AMC) {
+                        R2W.DIE();
+                    }
 
-                        STREQ [BWCUR, SBTIP] BW_IS_TIP;
-                        CLONE BW_IS_TIP AS BWIT;
-                        BRANCH(BWIT) {
-                            PRINT | * $BWCUR ($SBN) $BWMSG;
+                    CLONE R2W AS R2WC2;
+                    BRANCH(R2WC2) {
+                        PARSE [R2CUR, NULL] R2CN;
+                        GT [R2CN, 0] R2CONT;
+                        CLONE R2CONT AS R2CC;
+                        BRANCH(!R2CC) {
+                            R2W.DIE();
+                        }
+                    }
+                }
+            }
+        }
+
+        CONCAT [SIDE_DATA2, R2NAME] SIDE_DATA2;
+        CONCAT [SIDE_DATA2, TAB] SIDE_DATA2;
+        CONCAT [SIDE_DATA2, R2TIP] SIDE_DATA2;
+        CONCAT [SIDE_DATA2, TAB] SIDE_DATA2;
+        CONCAT [SIDE_DATA2, R2RFORK] SIDE_DATA2;
+        CONCAT [SIDE_DATA2, TAB] SIDE_DATA2;
+        CONCAT [SIDE_DATA2, R2RPAR] SIDE_DATA2;
+        CONCAT [SIDE_DATA2, NL] SIDE_DATA2;
+    }
+}
+
+TEXT "" SIDE_DATA2 AS SIDE_DATA;
+
+// ── phase 4: render using work stack ──
+// stack entries separated by NL
+// W;;branch;;cur;;stop;;prefix;;skip — walk a branch segment
+// O;;prefix — emit prefix|\
+// C;;prefix — emit prefix|/
+
+TEXT "W;;" HEAD_NAME ";;" HEAD_TIP ";;0;;" AS STACK;
+CONCAT [STACK, EMPTY] STACK;
+TEXT ";;N" AS SKIP_N;
+CONCAT [STACK, SKIP_N] STACK;
+
+TEXT ";;" AS SEP;
+
+BIFURCATE [STACK, NULL] PROC;
+~ATH(PROC) {
+    STREQ [STACK, EMPTY] STK_MT;
+    CLONE STK_MT AS STMC;
+    BRANCH(STMC) {
+        PROC.DIE();
+    }
+
+    SPLIT [STACK, NL] STK_LINES;
+    BIFURCATE STK_LINES[STK_TOP, STK_REST];
+
+    TEXT "" AS STACK;
+    ~ATH(STK_REST) {
+        BIFURCATE STK_REST[STK_ITEM, STK_REST];
+        LENGTH [STK_ITEM, NULL] SILEN;
+        BRANCH(SILEN) {
+            CONCAT [STACK, STK_ITEM] STACK;
+            CONCAT [STACK, NL] STACK;
+        }
+    }
+
+    SPLIT [STK_TOP, SEP] E_PARTS;
+    BIFURCATE E_PARTS[E_TYPE, E_REST];
+
+    // ── handle O (fork open) ──
+    TEXT "O" AS T_O;
+    STREQ [E_TYPE, T_O] IS_O;
+    CLONE IS_O AS IOC;
+    BRANCH(IOC) {
+        BIFURCATE E_REST[O_PREFIX, O_MORE];
+        EMIT $O_PREFIX;
+        PRINT |\\;
+    }
+
+    // ── handle C (fork close) ──
+    TEXT "C" AS T_C;
+    STREQ [E_TYPE, T_C] IS_C;
+    CLONE IS_C AS ICC;
+    BRANCH(ICC) {
+        BIFURCATE E_REST[C_PREFIX, C_MORE];
+        EMIT $C_PREFIX;
+        PRINT |/;
+    }
+
+    // ── handle W (walk) ──
+    TEXT "W" AS T_W;
+    STREQ [E_TYPE, T_W] IS_W;
+    CLONE IS_W AS IWC;
+    BRANCH(IWC) {
+        BIFURCATE E_REST[W_BRANCH, WR1];
+        BIFURCATE WR1[W_CUR, WR2];
+        BIFURCATE WR2[W_STOP, WR3];
+        BIFURCATE WR3[W_PREFIX, WR4];
+        BIFURCATE WR4[W_SKIP, WR5];
+
+        BIFURCATE [W_CUR, NULL] WLOOP;
+        ~ATH(WLOOP) {
+            STREQ [W_CUR, W_STOP] W_DONE;
+            CLONE W_DONE AS WDC;
+            BRANCH(WDC) {
+                WLOOP.DIE();
+            }
+            PARSE [W_CUR, NULL] W_CUR_N;
+            GT [W_CUR_N, 0] W_VALID;
+            CLONE W_VALID AS WVC;
+            BRANCH(!WVC) {
+                WLOOP.DIE();
+            }
+
+            // ── check for child forks ──
+            TEXT "N" AS W_HAS_FORK;
+            STREQ [W_SKIP, YES] SKIP_CHK;
+            CLONE SKIP_CHK AS SKC;
+            BRANCH(!SKC) {
+                SPLIT [SIDE_DATA, NL] FLINES;
+                TEXT W_PREFIX INDENT AS CHILD_PFX;
+                TEXT "" AS CHILD_ENTRIES;
+
+                ~ATH(FLINES) {
+                    BIFURCATE FLINES[FLINE, FLINES];
+                    LENGTH [FLINE, NULL] FLL;
+                    BRANCH(FLL) {
+                        SPLIT [FLINE, TAB] FPARTS;
+                        BIFURCATE FPARTS[FNAME, FR1];
+                        BIFURCATE FR1[FTIP, FR2];
+                        BIFURCATE FR2[FFORK, FR3];
+                        BIFURCATE FR3[FPARENT, FR4];
+
+                        STREQ [FPARENT, W_BRANCH] PAR_MATCH;
+                        CLONE PAR_MATCH AS PMC;
+                        BRANCH(PMC) {
+                            STREQ [FFORK, W_CUR] FORK_MATCH;
+                            CLONE FORK_MATCH AS FMC;
+                            BRANCH(FMC) {
+                                STREQ [FTIP, FFORK] F_STALE;
+                                CLONE F_STALE AS FSC;
+                                BRANCH(!FSC) {
+                                    TEXT "Y" AS W_HAS_FORK;
+
+                                    TEXT "O;;" W_PREFIX NL AS OENTRY;
+                                    TEXT "W;;" FNAME ";;" FTIP ";;" W_CUR ";;" CHILD_PFX ";;N" NL AS WENTRY;
+                                    TEXT "C;;" W_PREFIX NL AS CENTRY;
+
+                                    CONCAT [CHILD_ENTRIES, OENTRY] CHILD_ENTRIES;
+                                    CONCAT [CHILD_ENTRIES, WENTRY] CHILD_ENTRIES;
+                                    CONCAT [CHILD_ENTRIES, CENTRY] CHILD_ENTRIES;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                STREQ [W_HAS_FORK, YES] HF_CHK;
+                CLONE HF_CHK AS HFCC;
+                BRANCH(HFCC) {
+                    TEXT "W;;" W_BRANCH ";;" W_CUR ";;" W_STOP ";;" W_PREFIX ";;Y" NL AS RESUME;
+                    TEXT "" AS NEW_STACK;
+                    CONCAT [NEW_STACK, CHILD_ENTRIES] NEW_STACK;
+                    CONCAT [NEW_STACK, RESUME] NEW_STACK;
+                    CONCAT [NEW_STACK, STACK] NEW_STACK;
+                    TEXT "" NEW_STACK AS STACK;
+                    WLOOP.DIE();
+                }
+            }
+
+            TEXT "N" AS W_SKIP;
+
+            // ── read message and build decorators ──
+            TEXT ".ant/chambers/" W_CUR "/message" AS WMPATH;
+            READ WMPATH AS WMSG;
+            TRIM [WMSG, NULL] WMSG;
+
+            TEXT "" AS WDECO;
+
+            STREQ [W_CUR, HEAD_TIP] W_IS_TIP;
+            CLONE W_IS_TIP AS WITC;
+            BRANCH(WITC) {
+                TEXT HEAD_NAME ", HEAD" AS WDECO;
+            }
+
+            SPLIT [SIDE_DATA, NL] DTLINES;
+            ~ATH(DTLINES) {
+                BIFURCATE DTLINES[DTLINE, DTLINES];
+                LENGTH [DTLINE, NULL] DTLL;
+                BRANCH(DTLL) {
+                    SPLIT [DTLINE, TAB] DTPARTS;
+                    BIFURCATE DTPARTS[DTBN, DTR1];
+                    BIFURCATE DTR1[DTTIP, DTR2];
+
+                    STREQ [DTTIP, W_CUR] DT_HERE;
+                    CLONE DT_HERE AS DTHC;
+                    BRANCH(DTHC) {
+                        STREQ [WDECO, EMPTY] WD_MT;
+                        CLONE WD_MT AS WDMC;
+                        BRANCH(!WDMC) {
+                            TEXT WDECO ", " DTBN AS WDECO;
                         }
                         ELSE {
-                            PRINT | * $BWCUR $BWMSG;
+                            TEXT "" DTBN AS WDECO;
                         }
-
-                        TEXT ".ant/chambers/" BWCUR "/parent" AS BWPP;
-                        READ BWPP AS BWPAR;
-                        TRIM [BWPAR, NULL] BWPAR;
-                        TEXT "" BWPAR AS BWCUR;
-
-                        STREQ [BWCUR, CUR] BW_DONE;
-                        CLONE BW_DONE AS BWDC;
-                        BRANCH(BWDC) {
-                            BWLOOP.DIE();
-                        }
-                    }
-
-                    PRINT |/;
-                }
-            }
-        }
-    }
-
-    // ── 4b: deferred pipe from previous chamber ──
-
-    STREQ [NEED_PIPE, YES] NP_CHK;
-    CLONE NP_CHK AS NPC;
-    BRANCH(NPC) {
-        STREQ [HAS_FORK, YES] HF_CHK;
-        CLONE HF_CHK AS HFC;
-        BRANCH(!HFC) {
-            PRINT |;
-        }
-    }
-
-    // ── 4c: read message and build decorator string ──
-
-    TEXT ".ant/chambers/" CUR "/message" AS RMPATH;
-    READ RMPATH AS RMSG;
-    TRIM [RMSG, NULL] RMSG;
-
-    TEXT "" AS DECO;
-
-    // HEAD tip gets tunnel name + HEAD label
-    STREQ [CUR, HEAD_TIP] IS_TIP;
-    CLONE IS_TIP AS ITC;
-    BRANCH(ITC) {
-        TEXT HEAD_NAME ", HEAD" AS DECO;
-    }
-
-    // stale branches whose tip == CUR add their name
-    SPLIT [SIDE_DATA, NL] DLINES;
-    ~ATH(DLINES) {
-        BIFURCATE DLINES[DLINE, DLINES];
-        LENGTH [DLINE, NULL] DLL;
-        BRANCH(DLL) {
-            SPLIT [DLINE, TAB] DPARTS;
-            BIFURCATE DPARTS[DBN, DREST];
-            BIFURCATE DREST[DBTIP, DREST2];
-            BIFURCATE DREST2[DBFORK, DREST3];
-
-            STREQ [DBTIP, DBFORK] D_STALE;
-            CLONE D_STALE AS DSC;
-            BRANCH(DSC) {
-                STREQ [DBTIP, CUR] D_HERE;
-                CLONE D_HERE AS DHC;
-                BRANCH(DHC) {
-                    STREQ [DECO, EMPTY] DECO_MT;
-                    CLONE DECO_MT AS DMC;
-                    BRANCH(!DMC) {
-                        TEXT DECO ", " DBN AS DECO;
-                    }
-                    ELSE {
-                        TEXT "" DBN AS DECO;
                     }
                 }
             }
+
+            TEXT ".ant/chambers/" W_CUR "/name" AS WCNP;
+            EXISTS WCNP AS W_HAS_CN;
+            CLONE W_HAS_CN AS WHCNC;
+            BRANCH(WHCNC) {
+                READ WCNP AS WCNAME;
+                TRIM [WCNAME, NULL] WCNAME;
+                STREQ [WDECO, EMPTY] WD_MT2;
+                CLONE WD_MT2 AS WDMC2;
+                BRANCH(!WDMC2) {
+                    TEXT WDECO ", " WCNAME AS WDECO;
+                }
+                ELSE {
+                    TEXT "" WCNAME AS WDECO;
+                }
+            }
+
+            // ── emit chamber line ──
+            STREQ [WDECO, EMPTY] WD_MT3;
+            CLONE WD_MT3 AS WDMC3;
+            BRANCH(!WDMC3) {
+                EMIT $W_PREFIX;
+                PRINT * $W_CUR ($WDECO) $WMSG;
+            }
+            ELSE {
+                EMIT $W_PREFIX;
+                PRINT * $W_CUR $WMSG;
+            }
+
+            // ── advance ──
+            TEXT ".ant/chambers/" W_CUR "/parent" AS WPP;
+            READ WPP AS WPAR;
+            TRIM [WPAR, NULL] WPAR;
+            TEXT "" WPAR AS W_CUR;
         }
     }
-
-    // chamber name
-    TEXT ".ant/chambers/" CUR "/name" AS CNP;
-    EXISTS CNP AS HAS_CN;
-    CLONE HAS_CN AS HCNC;
-    BRANCH(HCNC) {
-        READ CNP AS CNAME;
-        TRIM [CNAME, NULL] CNAME;
-        STREQ [DECO, EMPTY] DECO_MT2;
-        CLONE DECO_MT2 AS DMC2;
-        BRANCH(!DMC2) {
-            TEXT DECO ", " CNAME AS DECO;
-        }
-        ELSE {
-            TEXT "" CNAME AS DECO;
-        }
-    }
-
-    // ── 4d: print chamber line ──
-
-    STREQ [DECO, EMPTY] DECO_MT3;
-    CLONE DECO_MT3 AS DMC3;
-    BRANCH(!DMC3) {
-        PRINT * $CUR ($DECO) $RMSG;
-    }
-    ELSE {
-        PRINT * $CUR $RMSG;
-    }
-
-    // ── 4e: advance to parent ──
-
-    TEXT ".ant/chambers/" CUR "/parent" AS RPP;
-    READ RPP AS RPAR;
-    TRIM [RPAR, NULL] RPAR;
-    PARSE [RPAR, NULL] RPAR_N;
-
-    GT [RPAR_N, 0] HAS_PAR;
-    CLONE HAS_PAR AS HPC;
-    BRANCH(HPC) {
-        TEXT "Y" AS NEED_PIPE;
-    }
-    ELSE {
-        TEXT "N" AS NEED_PIPE;
-    }
-
-    TEXT "" RPAR AS CUR;
-    PARSE [CUR, NULL] CUR_NUM;
-    GT [CUR_NUM, 0] RWALKING;
 }
 
 THIS.DIE();
