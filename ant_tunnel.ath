@@ -1,9 +1,11 @@
 // ant tunnel <name> — burrow to a different branch
-// switches HEAD and restores working tree from target chamber
+// switches HEAD and restores working tree from cumulative snapshot
 
 IMPORTF <trim> AS TRIM;
 IMPORTF <split> AS SPLIT;
 IMPORTF <streq> AS STREQ;
+IMPORTF <contains> AS CONTAINS;
+IMPORTF <concat> AS CONCAT;
 IMPORTF <length> AS LENGTH;
 IMPORTF <parse> AS PARSE;
 IMPORTF <gt> AS GT;
@@ -35,70 +37,81 @@ TRIM [OLD_CID, NULL] OLD_CID;
 // update HEAD
 WRITE NAME TO ".ant/HEAD" AS V1;
 
-// restore working tree from target chamber (if any chambers exist)
+TEXT "|" AS PIPE;
+TEXT "\t" AS TAB;
+TEXT "\n" AS NL;
+TEXT "0" AS ZERO_STR;
+
+// ── build cumulative file map for target chamber ──
+
 PARSE [CID, NULL] CID_NUM;
 GT [CID_NUM, 0] HAS_CHAMBER;
 CLONE HAS_CHAMBER AS HC;
 BRANCH(HC) {
-    // read manifest and restore files
-    TEXT ".ant/chambers/" CID "/files" AS MPATH;
-    READ MPATH AS MANIFEST;
-    TRIM [MANIFEST, NULL] MANIFEST;
+    TEXT "" AS FILE_MAP;
+    TEXT "|" AS SEEN;
+    TEXT "" CID AS WALK_CUR;
 
-    TEXT "\n" AS NL;
-    SPLIT [MANIFEST, NL] FNAMES;
-    IMPORT NUMBER 0 AS IDX;
+    PARSE [WALK_CUR, NULL] WN;
+    GT [WN, 0] WALKING;
+    ~ATH(WALKING) {
+        TEXT ".ant/chambers/" WALK_CUR "/files" AS WMPATH;
+        READ WMPATH AS WMAN;
+        TRIM [WMAN, NULL] WMAN;
 
-    ~ATH(FNAMES) {
-        BIFURCATE FNAMES[FNAME, FNAMES];
-        LENGTH [FNAME, NULL] FLEN;
-        BRANCH(FLEN) {
-            TO_STRING [IDX, NULL] IDX_S;
-            TEXT ".ant/chambers/" CID "/" IDX_S AS BPATH;
-            READ BPATH AS CONTENT;
-            WRITE CONTENT TO FNAME AS V2;
-            ADD [IDX, 1] IDX;
-        }
-    }
+        SPLIT [WMAN, NL] WFILES;
+        PARSE [ZERO_STR, NULL] WIDX;
+        ~ATH(WFILES) {
+            BIFURCATE WFILES[WFNAME, WFILES];
+            CLONE WFNAME AS WFC;
+            BRANCH(WFC) {
+                TEXT PIPE WFNAME PIPE AS WNEEDLE;
+                CONTAINS [SEEN, WNEEDLE] WSEEN;
+                CLONE WSEEN AS WSC;
+                BRANCH(!WSC) {
+                    CONCAT [SEEN, WFNAME] SEEN;
+                    CONCAT [SEEN, PIPE] SEEN;
 
-    // remove files from old chamber that aren't in target
-    PARSE [OLD_CID, NULL] OLD_NUM;
-    GT [OLD_NUM, 0] HAD_OLD;
-    CLONE HAD_OLD AS HOC;
-    BRANCH(HOC) {
-        TEXT ".ant/chambers/" OLD_CID "/files" AS OLD_MPATH;
-        READ OLD_MPATH AS OLD_MAN;
-        TRIM [OLD_MAN, NULL] OLD_MAN;
-        SPLIT [OLD_MAN, NL] OLD_FILES;
-
-        ~ATH(OLD_FILES) {
-            BIFURCATE OLD_FILES[OFNAME, OLD_FILES];
-            LENGTH [OFNAME, NULL] OFLEN;
-            BRANCH(OFLEN) {
-                // check if this file is in the target manifest
-                SPLIT [MANIFEST, NL] CHECK_FILES;
-                IMPORT ALIVE IN_TARGET;
-                IN_TARGET.DIE();
-
-                ~ATH(CHECK_FILES) {
-                    BIFURCATE CHECK_FILES[CFNAME, CHECK_FILES];
-                    STREQ [OFNAME, CFNAME] FMATCH;
-                    CLONE FMATCH AS FMC;
-                    BRANCH(FMC) {
-                        IMPORT ALIVE ITMARK;
-                        BIFURCATE [ITMARK, NULL] IN_TARGET;
-                    }
+                    TO_STRING [WIDX, NULL] WIDX_S;
+                    CONCAT [FILE_MAP, WFNAME] FILE_MAP;
+                    CONCAT [FILE_MAP, TAB] FILE_MAP;
+                    CONCAT [FILE_MAP, WALK_CUR] FILE_MAP;
+                    CONCAT [FILE_MAP, TAB] FILE_MAP;
+                    CONCAT [FILE_MAP, WIDX_S] FILE_MAP;
+                    CONCAT [FILE_MAP, NL] FILE_MAP;
                 }
-
-                CLONE IN_TARGET AS ITC;
-                BRANCH(!ITC) {
-                    // file not in target — delete from working tree
-                    READ OFNAME AS DEAD_FILE;
-                    DEAD_FILE.DIE();
-                }
+                ADD [WIDX, 1] WIDX;
             }
         }
+
+        TEXT ".ant/chambers/" WALK_CUR "/parent" AS WPPATH;
+        READ WPPATH AS WPAR;
+        TRIM [WPAR, NULL] WPAR;
+        TEXT "" WPAR AS WALK_CUR;
+        PARSE [WALK_CUR, NULL] WN;
+        GT [WN, 0] WALKING;
     }
+
+    // ── restore files from cumulative snapshot ──
+    TRIM [FILE_MAP, NULL] FILE_MAP;
+    SPLIT [FILE_MAP, NL] FMLINES;
+    ~ATH(FMLINES) {
+        BIFURCATE FMLINES[FMLINE, FMLINES];
+        CLONE FMLINE AS FLC;
+        BRANCH(FLC) {
+            SPLIT [FMLINE, TAB] FMPARTS;
+            BIFURCATE FMPARTS[FNAME, FMR1];
+            BIFURCATE FMR1[FCID, FMR2];
+            BIFURCATE FMR2[FIDX, FMR3];
+
+            TEXT ".ant/chambers/" FCID "/" FIDX AS BPATH;
+            READ BPATH AS CONTENT;
+            WRITE CONTENT TO FNAME AS V2;
+        }
+    }
+
+    // note: ~ATH has no file deletion — stale files from old branch
+    // remain on disk but are not tracked by status/diff
 }
 
 PRINT tunneled to: $NAME;
