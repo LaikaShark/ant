@@ -13,6 +13,7 @@ IMPORTF "ant_transplant.ath" AS ANT_TRANSPLANT;
 IMPORTF "ant_status.ath" AS ANT_STATUS;
 IMPORTF "ant_deliver.ath" AS ANT_DELIVER;
 IMPORTF "ant_gather.ath" AS ANT_GATHER;
+IMPORTF "ant_trail.ath" AS ANT_TRAIL;
 IMPORTF <streq> AS STREQ;
 
 // no args → print usage
@@ -123,6 +124,14 @@ BRANCH(V) {
     THIS.DIE();
 }
 
+TEXT "trail" AS S;
+STREQ [CMD, S] V;
+BRANCH(V) {
+    IMPORT ANY A;
+    ANT_TRAIL [REST, A] R;
+    THIS.DIE();
+}
+
 PRINT unknown command: $CMD;
-PRINT commands: hatch collect dig log fission tunnel diff splice transplant status deliver gather;
+PRINT commands: hatch collect dig log fission tunnel diff splice transplant status deliver gather trail;
 THIS.DIE();

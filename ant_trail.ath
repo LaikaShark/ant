@@ -1,0 +1,300 @@
+// ant trail — display colony chamber graph
+
+IMPORTF <trim> AS TRIM;
+IMPORTF <streq> AS STREQ;
+IMPORTF <parse> AS PARSE;
+IMPORTF <gt> AS GT;
+IMPORTF <concat> AS CONCAT;
+IMPORTF <length> AS LENGTH;
+IMPORTF <contains> AS CONTAINS;
+IMPORTF <split> AS SPLIT;
+
+TEXT "|" AS PIPE;
+TEXT "\t" AS TAB;
+TEXT "\n" AS NL;
+TEXT "" AS EMPTY;
+
+// ── phase 1: read HEAD and tip ──
+
+READ ".ant/HEAD" AS HEAD_NAME;
+TRIM [HEAD_NAME, NULL] HEAD_NAME;
+TEXT ".ant/refs/" HEAD_NAME AS HEAD_REF;
+READ HEAD_REF AS HEAD_TIP;
+TRIM [HEAD_TIP, NULL] HEAD_TIP;
+PARSE [HEAD_TIP, NULL] TIP_NUM;
+
+GT [TIP_NUM, 0] HAS_CHAMBERS;
+CLONE HAS_CHAMBERS AS HCC;
+BRANCH(!HCC) {
+    PRINT no chambers yet;
+    THIS.DIE();
+}
+
+// ── phase 2: build main chain ID string for containment checks ──
+// format: "|7|6|3|2|1|"
+
+TEXT "|" AS MAIN_IDS;
+TEXT "" HEAD_TIP AS MCUR;
+PARSE [MCUR, NULL] MCUR_N;
+GT [MCUR_N, 0] MW;
+
+~ATH(MW) {
+    CONCAT [MAIN_IDS, MCUR] MAIN_IDS;
+    CONCAT [MAIN_IDS, PIPE] MAIN_IDS;
+
+    TEXT ".ant/chambers/" MCUR "/parent" AS MPP;
+    READ MPP AS MPAR;
+    TRIM [MPAR, NULL] MPAR;
+    TEXT "" MPAR AS MCUR;
+    PARSE [MCUR, NULL] MCUR_N;
+    GT [MCUR_N, 0] MW;
+}
+
+// ── phase 3: collect side branches into SIDE_DATA ──
+// each line: name<TAB>tip<TAB>fork
+
+TEXT "" AS SIDE_DATA;
+
+LISTDIR ".ant/refs" AS BRANCHES;
+~ATH(BRANCHES) {
+    BIFURCATE BRANCHES[BNAME, BRANCHES];
+    LENGTH [BNAME, NULL] BLEN;
+    BRANCH(BLEN) {
+        STREQ [BNAME, HEAD_NAME] IS_HEAD;
+        CLONE IS_HEAD AS IHC;
+        BRANCH(!IHC) {
+            TEXT ".ant/refs/" BNAME AS BREF;
+            READ BREF AS BTIP;
+            TRIM [BTIP, NULL] BTIP;
+            PARSE [BTIP, NULL] BTIP_N;
+
+            GT [BTIP_N, 0] BVALID;
+            CLONE BVALID AS BVC;
+            BRANCH(BVC) {
+                TEXT "" BTIP AS BCUR;
+                TEXT "" BTIP AS BFORK;
+                BIFURCATE [BCUR, NULL] BW;
+
+                // check if tip is already on main chain (stale branch)
+                TEXT PIPE BCUR PIPE AS BNEEDLE;
+                CONTAINS [MAIN_IDS, BNEEDLE] TM;
+                CLONE TM AS TMC;
+                BRANCH(TMC) {
+                    BW.DIE();
+                }
+
+                // walk toward root until hitting a main-chain chamber
+                ~ATH(BW) {
+                    TEXT ".ant/chambers/" BCUR "/parent" AS BPP;
+                    READ BPP AS BPAR;
+                    TRIM [BPAR, NULL] BPAR;
+                    TEXT "" BPAR AS BCUR;
+
+                    PARSE [BCUR, NULL] BCURN;
+                    GT [BCURN, 0] BCONT;
+                    CLONE BCONT AS BCC;
+                    BRANCH(!BCC) {
+                        BW.DIE();
+                    }
+
+                    CLONE BW AS BWC;
+                    BRANCH(BWC) {
+                        TEXT PIPE BCUR PIPE AS BNEEDLE2;
+                        CONTAINS [MAIN_IDS, BNEEDLE2] OM;
+                        CLONE OM AS OMC;
+                        BRANCH(OMC) {
+                            TEXT "" BCUR AS BFORK;
+                            BW.DIE();
+                        }
+                    }
+                }
+
+                // store: name\ttip\tfork\n
+                CONCAT [SIDE_DATA, BNAME] SIDE_DATA;
+                CONCAT [SIDE_DATA, TAB] SIDE_DATA;
+                CONCAT [SIDE_DATA, BTIP] SIDE_DATA;
+                CONCAT [SIDE_DATA, TAB] SIDE_DATA;
+                CONCAT [SIDE_DATA, BFORK] SIDE_DATA;
+                CONCAT [SIDE_DATA, NL] SIDE_DATA;
+            }
+        }
+    }
+}
+
+// ── phase 4: render ──
+
+TEXT "" HEAD_TIP AS CUR;
+PARSE [CUR, NULL] CUR_NUM;
+GT [CUR_NUM, 0] RWALKING;
+TEXT "N" AS NEED_PIPE;
+TEXT "Y" AS YES;
+
+~ATH(RWALKING) {
+
+    // ── 4a: render fork blocks for side branches forking at CUR ──
+
+    TEXT "N" AS HAS_FORK;
+    SPLIT [SIDE_DATA, NL] SLINES;
+
+    ~ATH(SLINES) {
+        BIFURCATE SLINES[SLINE, SLINES];
+        LENGTH [SLINE, NULL] SLL;
+        BRANCH(SLL) {
+            SPLIT [SLINE, TAB] SPARTS;
+            BIFURCATE SPARTS[SBN, SREST];
+            BIFURCATE SREST[SBTIP, SREST2];
+            BIFURCATE SREST2[SBFORK, SREST3];
+
+            // skip stale branches (tip == fork)
+            STREQ [SBTIP, SBFORK] IS_STALE;
+            CLONE IS_STALE AS ISC;
+            BRANCH(!ISC) {
+                STREQ [SBFORK, CUR] FORK_HERE;
+                CLONE FORK_HERE AS FHC;
+                BRANCH(FHC) {
+                    TEXT "Y" AS HAS_FORK;
+                    PRINT |\\;
+
+                    // walk branch from tip down to fork point
+                    TEXT "" SBTIP AS BWCUR;
+                    BIFURCATE [BWCUR, NULL] BWLOOP;
+
+                    ~ATH(BWLOOP) {
+                        TEXT ".ant/chambers/" BWCUR "/message" AS BWMP;
+                        READ BWMP AS BWMSG;
+                        TRIM [BWMSG, NULL] BWMSG;
+
+                        STREQ [BWCUR, SBTIP] BW_IS_TIP;
+                        CLONE BW_IS_TIP AS BWIT;
+                        BRANCH(BWIT) {
+                            PRINT | * $BWCUR ($SBN) $BWMSG;
+                        }
+                        ELSE {
+                            PRINT | * $BWCUR $BWMSG;
+                        }
+
+                        TEXT ".ant/chambers/" BWCUR "/parent" AS BWPP;
+                        READ BWPP AS BWPAR;
+                        TRIM [BWPAR, NULL] BWPAR;
+                        TEXT "" BWPAR AS BWCUR;
+
+                        STREQ [BWCUR, CUR] BW_DONE;
+                        CLONE BW_DONE AS BWDC;
+                        BRANCH(BWDC) {
+                            BWLOOP.DIE();
+                        }
+                    }
+
+                    PRINT |/;
+                }
+            }
+        }
+    }
+
+    // ── 4b: deferred pipe from previous chamber ──
+
+    STREQ [NEED_PIPE, YES] NP_CHK;
+    CLONE NP_CHK AS NPC;
+    BRANCH(NPC) {
+        STREQ [HAS_FORK, YES] HF_CHK;
+        CLONE HF_CHK AS HFC;
+        BRANCH(!HFC) {
+            PRINT |;
+        }
+    }
+
+    // ── 4c: read message and build decorator string ──
+
+    TEXT ".ant/chambers/" CUR "/message" AS RMPATH;
+    READ RMPATH AS RMSG;
+    TRIM [RMSG, NULL] RMSG;
+
+    TEXT "" AS DECO;
+
+    // HEAD tip gets tunnel name + HEAD label
+    STREQ [CUR, HEAD_TIP] IS_TIP;
+    CLONE IS_TIP AS ITC;
+    BRANCH(ITC) {
+        TEXT HEAD_NAME ", HEAD" AS DECO;
+    }
+
+    // stale branches whose tip == CUR add their name
+    SPLIT [SIDE_DATA, NL] DLINES;
+    ~ATH(DLINES) {
+        BIFURCATE DLINES[DLINE, DLINES];
+        LENGTH [DLINE, NULL] DLL;
+        BRANCH(DLL) {
+            SPLIT [DLINE, TAB] DPARTS;
+            BIFURCATE DPARTS[DBN, DREST];
+            BIFURCATE DREST[DBTIP, DREST2];
+            BIFURCATE DREST2[DBFORK, DREST3];
+
+            STREQ [DBTIP, DBFORK] D_STALE;
+            CLONE D_STALE AS DSC;
+            BRANCH(DSC) {
+                STREQ [DBTIP, CUR] D_HERE;
+                CLONE D_HERE AS DHC;
+                BRANCH(DHC) {
+                    STREQ [DECO, EMPTY] DECO_MT;
+                    CLONE DECO_MT AS DMC;
+                    BRANCH(!DMC) {
+                        TEXT DECO ", " DBN AS DECO;
+                    }
+                    ELSE {
+                        TEXT "" DBN AS DECO;
+                    }
+                }
+            }
+        }
+    }
+
+    // chamber name
+    TEXT ".ant/chambers/" CUR "/name" AS CNP;
+    EXISTS CNP AS HAS_CN;
+    CLONE HAS_CN AS HCNC;
+    BRANCH(HCNC) {
+        READ CNP AS CNAME;
+        TRIM [CNAME, NULL] CNAME;
+        STREQ [DECO, EMPTY] DECO_MT2;
+        CLONE DECO_MT2 AS DMC2;
+        BRANCH(!DMC2) {
+            TEXT DECO ", " CNAME AS DECO;
+        }
+        ELSE {
+            TEXT "" CNAME AS DECO;
+        }
+    }
+
+    // ── 4d: print chamber line ──
+
+    STREQ [DECO, EMPTY] DECO_MT3;
+    CLONE DECO_MT3 AS DMC3;
+    BRANCH(!DMC3) {
+        PRINT * $CUR ($DECO) $RMSG;
+    }
+    ELSE {
+        PRINT * $CUR $RMSG;
+    }
+
+    // ── 4e: advance to parent ──
+
+    TEXT ".ant/chambers/" CUR "/parent" AS RPP;
+    READ RPP AS RPAR;
+    TRIM [RPAR, NULL] RPAR;
+    PARSE [RPAR, NULL] RPAR_N;
+
+    GT [RPAR_N, 0] HAS_PAR;
+    CLONE HAS_PAR AS HPC;
+    BRANCH(HPC) {
+        TEXT "Y" AS NEED_PIPE;
+    }
+    ELSE {
+        TEXT "N" AS NEED_PIPE;
+    }
+
+    TEXT "" RPAR AS CUR;
+    PARSE [CUR, NULL] CUR_NUM;
+    GT [CUR_NUM, 0] RWALKING;
+}
+
+THIS.DIE();

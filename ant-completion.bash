@@ -6,7 +6,7 @@ _ant_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    commands="hatch collect dig log fission tunnel diff splice transplant status deliver gather"
+    commands="hatch collect dig log fission tunnel diff splice transplant status deliver gather trail"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
