@@ -1,9 +1,11 @@
 // ant splice <branch> — merge another tunnel into current
 // file-level three-way merge with conflict markers
+// walks parent chains for cumulative file snapshots
 
 IMPORTF <trim> AS TRIM;
 IMPORTF <split> AS SPLIT;
 IMPORTF <streq> AS STREQ;
+IMPORTF <contains> AS CONTAINS;
 IMPORTF <concat> AS CONCAT;
 IMPORTF <length> AS LENGTH;
 IMPORTF <parse> AS PARSE;
@@ -90,26 +92,120 @@ TEXT "splice tunnel '" T_BRANCH "'" AS CMSG;
 TEXT CDIR "/message" AS MPATH;
 WRITE CMSG TO MPATH AS V3;
 
+TEXT "|" AS PIPE;
+TEXT "\t" AS TAB;
 TEXT "\n" AS NL;
+TEXT "0" AS ZERO_STR;
+
+// --- build cumulative file map for OURS ---
+TEXT "" AS O_FILE_MAP;
+TEXT "|" AS O_SEEN;
+TEXT "" O_CID AS O_WALK;
+
+PARSE [O_WALK, NULL] O_WN;
+GT [O_WN, 0] O_WALKING;
+~ATH(O_WALKING) {
+    TEXT ".ant/chambers/" O_WALK "/files" AS O_WMPATH;
+    READ O_WMPATH AS O_WMAN;
+    TRIM [O_WMAN, NULL] O_WMAN;
+
+    SPLIT [O_WMAN, NL] O_WFILES;
+    PARSE [ZERO_STR, NULL] O_WIDX;
+    ~ATH(O_WFILES) {
+        BIFURCATE O_WFILES[O_WFNAME, O_WFILES];
+        CLONE O_WFNAME AS OWFC;
+        BRANCH(OWFC) {
+            TEXT PIPE O_WFNAME PIPE AS O_WNEEDLE;
+            CONTAINS [O_SEEN, O_WNEEDLE] O_WSEEN;
+            CLONE O_WSEEN AS OWSC;
+            BRANCH(!OWSC) {
+                CONCAT [O_SEEN, O_WFNAME] O_SEEN;
+                CONCAT [O_SEEN, PIPE] O_SEEN;
+
+                TO_STRING [O_WIDX, NULL] O_WIDX_S;
+                CONCAT [O_FILE_MAP, O_WFNAME] O_FILE_MAP;
+                CONCAT [O_FILE_MAP, TAB] O_FILE_MAP;
+                CONCAT [O_FILE_MAP, O_WALK] O_FILE_MAP;
+                CONCAT [O_FILE_MAP, TAB] O_FILE_MAP;
+                CONCAT [O_FILE_MAP, O_WIDX_S] O_FILE_MAP;
+                CONCAT [O_FILE_MAP, NL] O_FILE_MAP;
+            }
+            ADD [O_WIDX, 1] O_WIDX;
+        }
+    }
+
+    TEXT ".ant/chambers/" O_WALK "/parent" AS O_WPPATH;
+    READ O_WPPATH AS O_WPAR;
+    TRIM [O_WPAR, NULL] O_WPAR;
+    TEXT "" O_WPAR AS O_WALK;
+    PARSE [O_WALK, NULL] O_WN;
+    GT [O_WN, 0] O_WALKING;
+}
+
+// --- build cumulative file map for THEIRS ---
+TEXT "" AS T_FILE_MAP;
+TEXT "|" AS T_SEEN;
+TEXT "" T_CID AS T_WALK;
+
+PARSE [T_WALK, NULL] T_WN;
+GT [T_WN, 0] T_WALKING;
+~ATH(T_WALKING) {
+    TEXT ".ant/chambers/" T_WALK "/files" AS T_WMPATH;
+    READ T_WMPATH AS T_WMAN;
+    TRIM [T_WMAN, NULL] T_WMAN;
+
+    SPLIT [T_WMAN, NL] T_WFILES;
+    PARSE [ZERO_STR, NULL] T_WIDX;
+    ~ATH(T_WFILES) {
+        BIFURCATE T_WFILES[T_WFNAME, T_WFILES];
+        CLONE T_WFNAME AS TWFC;
+        BRANCH(TWFC) {
+            TEXT PIPE T_WFNAME PIPE AS T_WNEEDLE;
+            CONTAINS [T_SEEN, T_WNEEDLE] T_WSEEN;
+            CLONE T_WSEEN AS TWSC;
+            BRANCH(!TWSC) {
+                CONCAT [T_SEEN, T_WFNAME] T_SEEN;
+                CONCAT [T_SEEN, PIPE] T_SEEN;
+
+                TO_STRING [T_WIDX, NULL] T_WIDX_S;
+                CONCAT [T_FILE_MAP, T_WFNAME] T_FILE_MAP;
+                CONCAT [T_FILE_MAP, TAB] T_FILE_MAP;
+                CONCAT [T_FILE_MAP, T_WALK] T_FILE_MAP;
+                CONCAT [T_FILE_MAP, TAB] T_FILE_MAP;
+                CONCAT [T_FILE_MAP, T_WIDX_S] T_FILE_MAP;
+                CONCAT [T_FILE_MAP, NL] T_FILE_MAP;
+            }
+            ADD [T_WIDX, 1] T_WIDX;
+        }
+    }
+
+    TEXT ".ant/chambers/" T_WALK "/parent" AS T_WPPATH;
+    READ T_WPPATH AS T_WPAR;
+    TRIM [T_WPAR, NULL] T_WPAR;
+    TEXT "" T_WPAR AS T_WALK;
+    PARSE [T_WALK, NULL] T_WN;
+    GT [T_WN, 0] T_WALKING;
+}
 
 // --- merge OURS files ---
-TEXT ".ant/chambers/" O_CID "/files" AS O_MPATH;
-READ O_MPATH AS O_MAN;
-TRIM [O_MAN, NULL] O_MAN;
-SPLIT [O_MAN, NL] O_FILES;
-IMPORT NUMBER 0 AS OIDX;
+TRIM [O_FILE_MAP, NULL] O_FILE_MAP;
+SPLIT [O_FILE_MAP, NL] O_FMLINES;
 IMPORT NUMBER 0 AS WIDX;
 TEXT "" AS MANIFEST;
 IMPORT ALIVE CONFLICTS;
 CONFLICTS.DIE();
 
-~ATH(O_FILES) {
-    BIFURCATE O_FILES[FNAME, O_FILES];
-    CLONE FNAME AS FNC;
-    BRANCH(FNC) {
+~ATH(O_FMLINES) {
+    BIFURCATE O_FMLINES[O_FMLINE, O_FMLINES];
+    CLONE O_FMLINE AS OFLC;
+    BRANCH(OFLC) {
+        SPLIT [O_FMLINE, TAB] O_FMPARTS;
+        BIFURCATE O_FMPARTS[FNAME, O_FMR1];
+        BIFURCATE O_FMR1[O_FCID, O_FMR2];
+        BIFURCATE O_FMR2[O_FIDX, O_FMR3];
+
         // read our blob
-        TO_STRING [OIDX, NULL] OIDX_S;
-        TEXT ".ant/chambers/" O_CID "/" OIDX_S AS OBP;
+        TEXT ".ant/chambers/" O_FCID "/" O_FIDX AS OBP;
         READ OBP AS O_CON;
 
         // default merged = ours
@@ -190,28 +286,29 @@ CONFLICTS.DIE();
         }
         CONCAT [MANIFEST, FNAME] MANIFEST;
         ADD [WIDX, 1] WIDX;
-        ADD [OIDX, 1] OIDX;
     }
 }
 
 // --- add THEIRS-only files ---
-TEXT ".ant/chambers/" T_CID "/files" AS T_MPATH;
-READ T_MPATH AS T_MAN;
-TRIM [T_MAN, NULL] T_MAN;
-SPLIT [T_MAN, NL] T_FILES;
-IMPORT NUMBER 0 AS TIDX;
+TRIM [T_FILE_MAP, NULL] T_FILE_MAP;
+SPLIT [T_FILE_MAP, NL] T_FMLINES;
 
-~ATH(T_FILES) {
-    BIFURCATE T_FILES[TFNAME, T_FILES];
-    CLONE TFNAME AS TFC;
-    BRANCH(TFC) {
+~ATH(T_FMLINES) {
+    BIFURCATE T_FMLINES[T_FMLINE, T_FMLINES];
+    CLONE T_FMLINE AS TFLC;
+    BRANCH(TFLC) {
+        SPLIT [T_FMLINE, TAB] T_FMPARTS;
+        BIFURCATE T_FMPARTS[TFNAME, T_FMR1];
+        BIFURCATE T_FMR1[T_FCID, T_FMR2];
+        BIFURCATE T_FMR2[T_FIDX, T_FMR3];
+
         // check if already in ours
-        ANT_FIND [TFNAME, O_CID] ALREADY;
+        TEXT PIPE TFNAME PIPE AS T_NEEDLE;
+        CONTAINS [O_SEEN, T_NEEDLE] ALREADY;
         CLONE ALREADY AS ALC;
         BRANCH(!ALC) {
             // not in ours → add from theirs
-            TO_STRING [TIDX, NULL] TIDX_S;
-            TEXT ".ant/chambers/" T_CID "/" TIDX_S AS TBP;
+            TEXT ".ant/chambers/" T_FCID "/" T_FIDX AS TBP;
             READ TBP AS TCON;
 
             TO_STRING [WIDX, NULL] WS;
@@ -225,7 +322,6 @@ IMPORT NUMBER 0 AS TIDX;
             CONCAT [MANIFEST, TFNAME] MANIFEST;
             ADD [WIDX, 1] WIDX;
         }
-        ADD [TIDX, 1] TIDX;
     }
 }
 
