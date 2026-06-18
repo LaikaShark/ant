@@ -246,11 +246,15 @@ TEXT ";;" AS SEP;
 
 BIFURCATE [STACK, NULL] PROC;
 ~ATH(PROC) {
+    TRIM [STACK, NULL] STACK;
     STREQ [STACK, EMPTY] STK_MT;
     CLONE STK_MT AS STMC;
     BRANCH(STMC) {
         PROC.DIE();
     }
+
+    CLONE PROC AS PACTIVE;
+    BRANCH(PACTIVE) {
 
     SPLIT [STACK, NL] STK_LINES;
     BIFURCATE STK_LINES[STK_TOP, STK_REST];
@@ -313,6 +317,9 @@ BIFURCATE [STACK, NULL] PROC;
                 WLOOP.DIE();
             }
 
+            CLONE WLOOP AS WA;
+            BRANCH(WA) {
+
             // ── check for child forks ──
             TEXT "N" AS W_HAS_FORK;
             STREQ [W_SKIP, YES] SKIP_CHK;
@@ -368,6 +375,9 @@ BIFURCATE [STACK, NULL] PROC;
                     WLOOP.DIE();
                 }
             }
+
+            CLONE WLOOP AS WA2;
+            BRANCH(WA2) {
 
             TEXT "N" AS W_SKIP;
 
@@ -441,7 +451,12 @@ BIFURCATE [STACK, NULL] PROC;
             READ WPP AS WPAR;
             TRIM [WPAR, NULL] WPAR;
             TEXT "" WPAR AS W_CUR;
+
+            }
+            }
         }
+    }
+
     }
 }
 
