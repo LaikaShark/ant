@@ -1,50 +1,70 @@
-// ant_find — look up a file's blob content from a chamber
+// ant_find — look up a file's blob content from a chamber's cumulative snapshot
 // ARGS = [FNAME, CID]
-// returns blob content if found, NULL if not
+// walks parent chain; returns blob content if found, NULL if not
 
 IMPORTF <streq> AS STREQ;
 IMPORTF <trim> AS TRIM;
 IMPORTF <split> AS SPLIT;
+IMPORTF <length> AS LENGTH;
+IMPORTF <parse> AS PARSE;
+IMPORTF <gt> AS GT;
 IMPORTF <add> AS ADD;
 IMPORTF <to_string> AS TO_STRING;
 
 BIFURCATE ARGS[FNAME, CID];
 
-TEXT ".ant/chambers/" CID "/files" AS MPATH;
-READ MPATH AS MANIFEST;
-TRIM [MANIFEST, NULL] MANIFEST;
-
-CLONE MANIFEST AS MC;
-BRANCH(!MC) {
-    THIS.DIE();
-}
-
 TEXT "\n" AS NL;
-SPLIT [MANIFEST, NL] MFILES;
-IMPORT NUMBER 0 AS IDX;
+TEXT "0" AS ZERO_STR;
+TEXT "" CID AS CUR;
+PARSE [CUR, NULL] CN;
+GT [CN, 0] SEARCHING;
 IMPORT ALIVE RESULT;
 RESULT.DIE();
 
-~ATH(MFILES) {
-    BIFURCATE MFILES[MF, MFILES];
-    CLONE MF AS MFC;
-    BRANCH(MFC) {
-        STREQ [MF, FNAME] MEQ;
-        CLONE MEQ AS MEC;
-        BRANCH(MEC) {
-            TO_STRING [IDX, NULL] IDX_S;
-            TEXT ".ant/chambers/" CID "/" IDX_S AS BPATH;
-            READ BPATH AS CONTENT;
-            BIFURCATE [CONTENT, NULL] RESULT;
+~ATH(SEARCHING) {
+    TEXT ".ant/chambers/" CUR "/files" AS MPATH;
+    READ MPATH AS MANIFEST;
+    TRIM [MANIFEST, NULL] MANIFEST;
+
+    SPLIT [MANIFEST, NL] MFILES;
+    PARSE [ZERO_STR, NULL] IDX;
+
+    ~ATH(MFILES) {
+        BIFURCATE MFILES[MF, MFILES];
+        CLONE MF AS MFC;
+        BRANCH(MFC) {
+            STREQ [MF, FNAME] MEQ;
+            CLONE MEQ AS MEC;
+            BRANCH(MEC) {
+                TO_STRING [IDX, NULL] IDX_S;
+                TEXT ".ant/chambers/" CUR "/" IDX_S AS BPATH;
+                READ BPATH AS CONTENT;
+                BIFURCATE [CONTENT, NULL] RESULT;
+            }
+            ELSE {
+                ADD [IDX, 1] IDX;
+            }
         }
-        ELSE {
-            ADD [IDX, 1] IDX;
-        }
+    }
+
+    CLONE RESULT AS RC;
+    BRANCH(RC) {
+        SEARCHING.DIE();
+    }
+
+    CLONE SEARCHING AS SC;
+    BRANCH(SC) {
+        TEXT ".ant/chambers/" CUR "/parent" AS PP;
+        READ PP AS PAR;
+        TRIM [PAR, NULL] PAR;
+        TEXT "" PAR AS CUR;
+        PARSE [CUR, NULL] CN;
+        GT [CN, 0] SEARCHING;
     }
 }
 
-CLONE RESULT AS RC;
-BRANCH(RC) {
+CLONE RESULT AS RC2;
+BRANCH(RC2) {
     BIFURCATE RESULT[CONTENT, JUNK2];
     THIS.DIE(CONTENT);
 }
