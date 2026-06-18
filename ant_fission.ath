@@ -89,6 +89,13 @@ BRANCH(RCHECK) {
         TEXT ".ant/chambers/" TARGET_CID AS CDIR;
     }
 
+    // read current HEAD chamber manifest before switching
+    READ ".ant/HEAD" AS OLD_TNAME;
+    TRIM [OLD_TNAME, NULL] OLD_TNAME;
+    TEXT ".ant/refs/" OLD_TNAME AS OLD_REF;
+    READ OLD_REF AS OLD_CID;
+    TRIM [OLD_CID, NULL] OLD_CID;
+
     // create ref at target chamber
     TEXT ".ant/refs/" NAME AS NEW_REF;
     WRITE TARGET_CID TO NEW_REF AS V;
@@ -100,6 +107,8 @@ BRANCH(RCHECK) {
     TEXT "" AS EMPTY;
     WRITE EMPTY TO ".ant/forage" AS V3;
 
+    TEXT "\n" AS NL;
+
     // restore working tree from target chamber
     PARSE [TARGET_CID, NULL] CID_NUM;
     GT [CID_NUM, 0] HAS_CHAMBER;
@@ -109,7 +118,6 @@ BRANCH(RCHECK) {
         READ MPATH AS MANIFEST;
         TRIM [MANIFEST, NULL] MANIFEST;
 
-        TEXT "\n" AS NL;
         SPLIT [MANIFEST, NL] FNAMES;
         IMPORT NUMBER 0 AS IDX;
 
@@ -122,6 +130,45 @@ BRANCH(RCHECK) {
                 READ BPATH AS CONTENT;
                 WRITE CONTENT TO FNAME AS V4;
                 ADD [IDX, 1] IDX;
+            }
+        }
+
+        // remove files from old chamber that aren't in target
+        PARSE [OLD_CID, NULL] OLD_NUM;
+        GT [OLD_NUM, 0] HAD_OLD;
+        CLONE HAD_OLD AS HOC;
+        BRANCH(HOC) {
+            TEXT ".ant/chambers/" OLD_CID "/files" AS OLD_MPATH;
+            READ OLD_MPATH AS OLD_MAN;
+            TRIM [OLD_MAN, NULL] OLD_MAN;
+            SPLIT [OLD_MAN, NL] OLD_FILES;
+
+            ~ATH(OLD_FILES) {
+                BIFURCATE OLD_FILES[OFNAME, OLD_FILES];
+                LENGTH [OFNAME, NULL] OFLEN;
+                BRANCH(OFLEN) {
+                    // check if this file is in the target manifest
+                    SPLIT [MANIFEST, NL] CHECK_FILES;
+                    IMPORT ALIVE IN_TARGET;
+                    IN_TARGET.DIE();
+
+                    ~ATH(CHECK_FILES) {
+                        BIFURCATE CHECK_FILES[CFNAME, CHECK_FILES];
+                        STREQ [OFNAME, CFNAME] FMATCH;
+                        CLONE FMATCH AS FMC;
+                        BRANCH(FMC) {
+                            IMPORT ALIVE ITMARK;
+                            BIFURCATE [ITMARK, NULL] IN_TARGET;
+                        }
+                    }
+
+                    CLONE IN_TARGET AS ITC;
+                    BRANCH(!ITC) {
+                        // file not in target — delete from working tree
+                        READ OFNAME AS DEAD_FILE;
+                        DEAD_FILE.DIE();
+                    }
+                }
             }
         }
     }

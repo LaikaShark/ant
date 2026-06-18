@@ -3,6 +3,7 @@
 
 IMPORTF <trim> AS TRIM;
 IMPORTF <split> AS SPLIT;
+IMPORTF <streq> AS STREQ;
 IMPORTF <length> AS LENGTH;
 IMPORTF <parse> AS PARSE;
 IMPORTF <gt> AS GT;
@@ -23,6 +24,13 @@ BRANCH(!REC) {
 // read target branch ref
 READ REF_PATH AS CID;
 TRIM [CID, NULL] CID;
+
+// read current HEAD chamber id before switching
+READ ".ant/HEAD" AS OLD_TNAME;
+TRIM [OLD_TNAME, NULL] OLD_TNAME;
+TEXT ".ant/refs/" OLD_TNAME AS OLD_REF;
+READ OLD_REF AS OLD_CID;
+TRIM [OLD_CID, NULL] OLD_CID;
 
 // update HEAD
 WRITE NAME TO ".ant/HEAD" AS V1;
@@ -50,6 +58,45 @@ BRANCH(HC) {
             READ BPATH AS CONTENT;
             WRITE CONTENT TO FNAME AS V2;
             ADD [IDX, 1] IDX;
+        }
+    }
+
+    // remove files from old chamber that aren't in target
+    PARSE [OLD_CID, NULL] OLD_NUM;
+    GT [OLD_NUM, 0] HAD_OLD;
+    CLONE HAD_OLD AS HOC;
+    BRANCH(HOC) {
+        TEXT ".ant/chambers/" OLD_CID "/files" AS OLD_MPATH;
+        READ OLD_MPATH AS OLD_MAN;
+        TRIM [OLD_MAN, NULL] OLD_MAN;
+        SPLIT [OLD_MAN, NL] OLD_FILES;
+
+        ~ATH(OLD_FILES) {
+            BIFURCATE OLD_FILES[OFNAME, OLD_FILES];
+            LENGTH [OFNAME, NULL] OFLEN;
+            BRANCH(OFLEN) {
+                // check if this file is in the target manifest
+                SPLIT [MANIFEST, NL] CHECK_FILES;
+                IMPORT ALIVE IN_TARGET;
+                IN_TARGET.DIE();
+
+                ~ATH(CHECK_FILES) {
+                    BIFURCATE CHECK_FILES[CFNAME, CHECK_FILES];
+                    STREQ [OFNAME, CFNAME] FMATCH;
+                    CLONE FMATCH AS FMC;
+                    BRANCH(FMC) {
+                        IMPORT ALIVE ITMARK;
+                        BIFURCATE [ITMARK, NULL] IN_TARGET;
+                    }
+                }
+
+                CLONE IN_TARGET AS ITC;
+                BRANCH(!ITC) {
+                    // file not in target — delete from working tree
+                    READ OFNAME AS DEAD_FILE;
+                    DEAD_FILE.DIE();
+                }
+            }
         }
     }
 }
