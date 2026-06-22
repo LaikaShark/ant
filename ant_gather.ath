@@ -23,6 +23,12 @@ IMPORTF <sub> AS SUB;
 IMPORTF <to_string> AS TO_STRING;
 IMPORTF <streq> AS STREQ;
 IMPORTF <length> AS LENGTH;
+IMPORTF <startswith> AS STARTSWITH;
+IMPORTF <drop> AS DROP;
+
+// tombstone marker for buried files
+TEXT ".ant-bury/" AS MARKER;
+LENGTH [MARKER, NULL] MLEN;
 
 // extract args from nested list
 BIFURCATE ARGS[INNER, JUNK];
@@ -192,12 +198,26 @@ BRANCH(HTC) {
         BIFURCATE FNAMES[WFNAME, FNAMES];
         CLONE WFNAME AS WFC;
         BRANCH(WFC) {
-            // read blob from chamber storage
-            TO_STRING [IDX, NULL] IDX_S;
-            TEXT ".ant/chambers/" TIP "/" IDX_S AS BPATH;
-            READ BPATH AS BLOB;
-            // write to working tree
-            WRITE BLOB TO WFNAME AS VW;
+            STARTSWITH [WFNAME, MARKER] ISTOMB;
+            CLONE ISTOMB AS ITC;
+            BRANCH(ITC) {
+                // tombstone: remove the real file instead of writing a blob
+                DROP [WFNAME, MLEN] RNAME;
+                EXISTS RNAME AS RE2;
+                CLONE RE2 AS RE2C;
+                BRANCH(RE2C) {
+                    READ RNAME AS DEADF;
+                    DEADF.DIE();
+                }
+            }
+            ELSE {
+                // read blob from chamber storage
+                TO_STRING [IDX, NULL] IDX_S;
+                TEXT ".ant/chambers/" TIP "/" IDX_S AS BPATH;
+                READ BPATH AS BLOB;
+                // write to working tree
+                WRITE BLOB TO WFNAME AS VW;
+            }
             ADD [IDX, 1] IDX;
         }
     }

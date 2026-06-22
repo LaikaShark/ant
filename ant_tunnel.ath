@@ -11,6 +11,8 @@ IMPORTF <parse> AS PARSE;
 IMPORTF <gt> AS GT;
 IMPORTF <add> AS ADD;
 IMPORTF <to_string> AS TO_STRING;
+IMPORTF <startswith> AS STARTSWITH;
+IMPORTF <drop> AS DROP;
 
 BIFURCATE ARGS[NAME, JUNK];
 
@@ -41,6 +43,8 @@ TEXT "|" AS PIPE;
 TEXT "\t" AS TAB;
 TEXT "\n" AS NL;
 TEXT "0" AS ZERO_STR;
+TEXT ".ant-bury/" AS MARKER;   // tombstone prefix
+LENGTH [MARKER, NULL] MLEN;    // marker length, for stripping
 
 // build cumulative file map for target chamber
 
@@ -50,6 +54,7 @@ CLONE HAS_CHAMBER AS HC;
 BRANCH(HC) {
     TEXT "" AS FILE_MAP;
     TEXT "|" AS SEEN;
+    TEXT "" AS TOMBS;          // buried files (as of tip) to remove from disk
     TEXT "" CID AS WALK_CUR;
 
     PARSE [WALK_CUR, NULL] WN;
@@ -65,20 +70,38 @@ BRANCH(HC) {
             BIFURCATE WFILES[WFNAME, WFILES];
             CLONE WFNAME AS WFC;
             BRANCH(WFC) {
-                TEXT PIPE WFNAME PIPE AS WNEEDLE;
-                CONTAINS [SEEN, WNEEDLE] WSEEN;
-                CLONE WSEEN AS WSC;
-                BRANCH(!WSC) {
-                    CONCAT [SEEN, WFNAME] SEEN;
-                    CONCAT [SEEN, PIPE] SEEN;
+                STARTSWITH [WFNAME, MARKER] ISTOMB;
+                CLONE ISTOMB AS ITC;
+                BRANCH(ITC) {
+                    // tombstone: shadow the real name (first occurrence wins)
+                    // without adding it to the snapshot; remember it for removal
+                    DROP [WFNAME, MLEN] RNAME;
+                    TEXT PIPE RNAME PIPE AS TNEEDLE;
+                    CONTAINS [SEEN, TNEEDLE] TSEEN;
+                    CLONE TSEEN AS TSC;
+                    BRANCH(!TSC) {
+                        CONCAT [SEEN, RNAME] SEEN;
+                        CONCAT [SEEN, PIPE] SEEN;
+                        CONCAT [TOMBS, RNAME] TOMBS;
+                        CONCAT [TOMBS, NL] TOMBS;
+                    }
+                }
+                ELSE {
+                    TEXT PIPE WFNAME PIPE AS WNEEDLE;
+                    CONTAINS [SEEN, WNEEDLE] WSEEN;
+                    CLONE WSEEN AS WSC;
+                    BRANCH(!WSC) {
+                        CONCAT [SEEN, WFNAME] SEEN;
+                        CONCAT [SEEN, PIPE] SEEN;
 
-                    TO_STRING [WIDX, NULL] WIDX_S;
-                    CONCAT [FILE_MAP, WFNAME] FILE_MAP;
-                    CONCAT [FILE_MAP, TAB] FILE_MAP;
-                    CONCAT [FILE_MAP, WALK_CUR] FILE_MAP;
-                    CONCAT [FILE_MAP, TAB] FILE_MAP;
-                    CONCAT [FILE_MAP, WIDX_S] FILE_MAP;
-                    CONCAT [FILE_MAP, NL] FILE_MAP;
+                        TO_STRING [WIDX, NULL] WIDX_S;
+                        CONCAT [FILE_MAP, WFNAME] FILE_MAP;
+                        CONCAT [FILE_MAP, TAB] FILE_MAP;
+                        CONCAT [FILE_MAP, WALK_CUR] FILE_MAP;
+                        CONCAT [FILE_MAP, TAB] FILE_MAP;
+                        CONCAT [FILE_MAP, WIDX_S] FILE_MAP;
+                        CONCAT [FILE_MAP, NL] FILE_MAP;
+                    }
                 }
                 ADD [WIDX, 1] WIDX;
             }
@@ -110,8 +133,21 @@ BRANCH(HC) {
         }
     }
 
-    // note: ~ATH has no file deletion — stale files from old branch
-    // remain on disk but are not tracked by status/diff
+    // remove files buried in the target snapshot from the working tree
+    // (READ binds an owned path; .DIE unlinks it)
+    SPLIT [TOMBS, NL] TLIST;
+    ~ATH(TLIST) {
+        BIFURCATE TLIST[TF, TLIST];
+        LENGTH [TF, NULL] TFLEN;
+        BRANCH(TFLEN) {
+            EXISTS TF AS TE;
+            CLONE TE AS TEC;
+            BRANCH(TEC) {
+                READ TF AS DEADF;
+                DEADF.DIE();
+            }
+        }
+    }
 }
 
 PRINT tunneled to: $NAME;

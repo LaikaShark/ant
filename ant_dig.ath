@@ -27,8 +27,12 @@ IMPORTF <add> AS ADD;
 IMPORTF <to_string> AS TO_STRING;
 IMPORTF <parse> AS PARSE;
 IMPORTF <now> AS NOW;
+IMPORTF <startswith> AS STARTSWITH;
 
 BIFURCATE ARGS[MSG, REST];
+
+// tombstone marker: a forage entry of ".ant-bury/<path>" records a removal
+TEXT ".ant-bury/" AS MARKER;
 
 // read current tunnel and its ref
 READ ".ant/HEAD" AS TNAME;
@@ -89,15 +93,22 @@ TEXT "" AS MANIFEST;
     BIFURCATE FILES[FNAME, FILES];
     LENGTH [FNAME, NULL] FLEN;
     BRANCH(FLEN) {
-        // read working-tree file
-        READ FNAME AS CONTENT;
-
-        // write blob: .ant/chambers/<id>/<idx>
+        // blob path for this manifest position
         TO_STRING [IDX, NULL] IDX_S;
         TEXT CDIR "/" IDX_S AS BPATH;
+
+        // tombstone entries (".ant-bury/<path>") record a removal: store an
+        // empty blob with no working-tree read. normal entries read the file.
+        TEXT "" AS CONTENT;
+        STARTSWITH [FNAME, MARKER] ISTOMB;
+        CLONE ISTOMB AS ITC;
+        BRANCH(!ITC) {
+            READ FNAME AS CONTENT;
+        }
         WRITE CONTENT TO BPATH AS V4;
 
-        // add to manifest
+        // add to manifest (tombstone entries keep their marker prefix so the
+        // blob index stays aligned line-for-line)
         CLONE MANIFEST AS MCHECK;
         BRANCH(MCHECK) {
             CONCAT [MANIFEST, NL] MANIFEST;

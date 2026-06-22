@@ -22,6 +22,8 @@ IMPORTF <parse> AS PARSE;
 IMPORTF <gt> AS GT;
 IMPORTF <add> AS ADD;
 IMPORTF <to_string> AS TO_STRING;
+IMPORTF <startswith> AS STARTSWITH;
+IMPORTF <drop> AS DROP;
 
 // read HEAD tunnel ref to get current tip chamber id
 READ ".ant/HEAD" AS TNAME;
@@ -36,6 +38,10 @@ PRINT on tunnel: $TNAME;
 // read forage pile for later display
 READ ".ant/forage" AS PILE;
 TRIM [PILE, NULL] PILE;
+
+// tombstone marker, defined early so the forage display can flag burials
+TEXT ".ant-bury/" AS MARKER;
+LENGTH [MARKER, NULL] MLEN;
 
 // if no chambers exist, show forage or "nothing collected"
 PARSE [CID, NULL] CID_NUM;
@@ -52,7 +58,15 @@ BRANCH(!HC) {
             BIFURCATE PFILES[PF, PFILES];
             CLONE PF AS PFC;
             BRANCH(PFC) {
-                PRINT   $PF;
+                STARTSWITH [PF, MARKER] PIST;
+                CLONE PIST AS PISTC;
+                BRANCH(PISTC) {
+                    DROP [PF, MLEN] PRN;
+                    PRINT   $PRN (buried);
+                }
+                ELSE {
+                    PRINT   $PF;
+                }
             }
         }
     }
@@ -86,22 +100,37 @@ GT [WN, 0] WALKING;
         BIFURCATE WFILES[WFNAME, WFILES];
         LENGTH [WFNAME, NULL] WFLEN;
         BRANCH(WFLEN) {
-            // check if filename already seen
-            TEXT PIPE WFNAME PIPE AS WNEEDLE;
-            CONTAINS [SEEN, WNEEDLE] WSEEN;
-            CLONE WSEEN AS WSC;
-            BRANCH(!WSC) {
-                // new filename — record it
-                CONCAT [SEEN, WFNAME] SEEN;
-                CONCAT [SEEN, PIPE] SEEN;
+            STARTSWITH [WFNAME, MARKER] ISTOMB;
+            CLONE ISTOMB AS ITC;
+            BRANCH(ITC) {
+                // tombstone: shadow the real name, keep it out of the snapshot
+                DROP [WFNAME, MLEN] RNAME;
+                TEXT PIPE RNAME PIPE AS TNEEDLE;
+                CONTAINS [SEEN, TNEEDLE] TSEEN;
+                CLONE TSEEN AS TSC;
+                BRANCH(!TSC) {
+                    CONCAT [SEEN, RNAME] SEEN;
+                    CONCAT [SEEN, PIPE] SEEN;
+                }
+            }
+            ELSE {
+                // check if filename already seen
+                TEXT PIPE WFNAME PIPE AS WNEEDLE;
+                CONTAINS [SEEN, WNEEDLE] WSEEN;
+                CLONE WSEEN AS WSC;
+                BRANCH(!WSC) {
+                    // new filename — record it
+                    CONCAT [SEEN, WFNAME] SEEN;
+                    CONCAT [SEEN, PIPE] SEEN;
 
-                TO_STRING [WIDX, NULL] WIDX_S;
-                CONCAT [FILE_MAP, WFNAME] FILE_MAP;
-                CONCAT [FILE_MAP, TAB] FILE_MAP;
-                CONCAT [FILE_MAP, WALK_CUR] FILE_MAP;
-                CONCAT [FILE_MAP, TAB] FILE_MAP;
-                CONCAT [FILE_MAP, WIDX_S] FILE_MAP;
-                CONCAT [FILE_MAP, NL] FILE_MAP;
+                    TO_STRING [WIDX, NULL] WIDX_S;
+                    CONCAT [FILE_MAP, WFNAME] FILE_MAP;
+                    CONCAT [FILE_MAP, TAB] FILE_MAP;
+                    CONCAT [FILE_MAP, WALK_CUR] FILE_MAP;
+                    CONCAT [FILE_MAP, TAB] FILE_MAP;
+                    CONCAT [FILE_MAP, WIDX_S] FILE_MAP;
+                    CONCAT [FILE_MAP, NL] FILE_MAP;
+                }
             }
             ADD [WIDX, 1] WIDX;
         }
@@ -126,7 +155,15 @@ BRANCH(PC) {
         BIFURCATE PFILES[PF, PFILES];
         CLONE PF AS PFC;
         BRANCH(PFC) {
-            PRINT   $PF;
+            STARTSWITH [PF, MARKER] PIST;
+            CLONE PIST AS PISTC;
+            BRANCH(PISTC) {
+                DROP [PF, MLEN] PRN;
+                PRINT   $PRN (buried);
+            }
+            ELSE {
+                PRINT   $PF;
+            }
         }
     }
 }

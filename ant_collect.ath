@@ -11,8 +11,30 @@ IMPORTF <concat> AS CONCAT;
 IMPORTF <split> AS SPLIT;
 IMPORTF <trim> AS TRIM;
 IMPORTF <length> AS LENGTH;
+IMPORTF <startswith> AS STARTSWITH;
 
 BIFURCATE ARGS[FNAME, JUNK];
+
+// reserved-prefix guard: ".ant-bury/" is the tombstone marker, ".ant/" is
+// internal storage — neither may be tracked as a real file
+TEXT ".ant-bury/" AS BURYMARK;
+TEXT ".ant/" AS ANTDIR;
+STARTSWITH [FNAME, BURYMARK] BADM;
+CLONE BADM AS BADMC;
+BRANCH(BADMC) {
+    PRINT refusing reserved path: $FNAME;
+    THIS.DIE();
+}
+STARTSWITH [FNAME, ANTDIR] BADA;
+CLONE BADA AS BADAC;
+BRANCH(BADAC) {
+    PRINT refusing reserved path: $FNAME;
+    THIS.DIE();
+}
+
+// tombstone form of this file, used to clear a pending bury on re-collect
+TEXT "" BURYMARK AS TOMB;
+CONCAT [TOMB, FNAME] TOMB;
 
 // read current forage pile
 READ ".ant/forage" AS PILE;
@@ -26,18 +48,32 @@ SPLIT [PILE, NL] LINES;
 IMPORT ALIVE FOUND;
 FOUND.DIE();
 
-// scan forage entries for existing match
+// rebuild the pile dropping any pending tombstone for this file, and detect
+// whether the plain entry is already staged
+TEXT "" AS REBUILT;
 ~ATH(LINES) {
     BIFURCATE LINES[LINE, LINES];
     LENGTH [LINE, NULL] LLEN;
     BRANCH(LLEN) {
         STREQ [LINE, FNAME] EQ;
-        BRANCH(EQ) {
+        CLONE EQ AS EQC;
+        BRANCH(EQC) {
             IMPORT ALIVE MARKER;
             BIFURCATE [MARKER, NULL] FOUND;
         }
+        // keep the line unless it is a stale tombstone for this file
+        STREQ [LINE, TOMB] ISTOMB;
+        CLONE ISTOMB AS ISTOMBC;
+        BRANCH(!ISTOMBC) {
+            CLONE REBUILT AS RBC;
+            BRANCH(RBC) {
+                CONCAT [REBUILT, NL] REBUILT;
+            }
+            CONCAT [REBUILT, LINE] REBUILT;
+        }
     }
 }
+TEXT "" REBUILT AS PILE;
 
 // if not found, append filename to forage pile
 CLONE FOUND AS FCHECK;

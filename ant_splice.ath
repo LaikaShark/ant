@@ -33,6 +33,8 @@ IMPORTF <parse> AS PARSE;
 IMPORTF <gt> AS GT;
 IMPORTF <add> AS ADD;
 IMPORTF <to_string> AS TO_STRING;
+IMPORTF <startswith> AS STARTSWITH;
+IMPORTF <drop> AS DROP;
 IMPORTF "ant_find.ath" AS ANT_FIND;
 
 // extract source branch name from ARGS
@@ -130,6 +132,8 @@ TEXT "|" AS PIPE;
 TEXT "\t" AS TAB;
 TEXT "\n" AS NL;
 TEXT "0" AS ZERO_STR;
+TEXT ".ant-bury/" AS MARKER;  // tombstone prefix
+LENGTH [MARKER, NULL] MLEN;   // marker length, for stripping
 
 // build cumulative file map for OURS (same algorithm as ant_diff/ant_status)
 TEXT "" AS O_FILE_MAP;
@@ -150,22 +154,38 @@ GT [O_WN, 0] O_WALKING;
         BIFURCATE O_WFILES[O_WFNAME, O_WFILES];
         CLONE O_WFNAME AS OWFC;
         BRANCH(OWFC) {
-            // check if filename already seen (first occurrence wins)
-            TEXT PIPE O_WFNAME PIPE AS O_WNEEDLE;
-            CONTAINS [O_SEEN, O_WNEEDLE] O_WSEEN;
-            CLONE O_WSEEN AS OWSC;
-            BRANCH(!OWSC) {
-                // new filename — record in map and dedup tracker
-                CONCAT [O_SEEN, O_WFNAME] O_SEEN;
-                CONCAT [O_SEEN, PIPE] O_SEEN;
+            STARTSWITH [O_WFNAME, MARKER] O_ISTOMB;
+            CLONE O_ISTOMB AS O_ITC;
+            BRANCH(O_ITC) {
+                // tombstone: shadow the real name so it is treated as deleted
+                // in OURS (and not later resurrected from THEIRS)
+                DROP [O_WFNAME, MLEN] O_RNAME;
+                TEXT PIPE O_RNAME PIPE AS O_TNEEDLE;
+                CONTAINS [O_SEEN, O_TNEEDLE] O_TSEEN;
+                CLONE O_TSEEN AS O_TSC;
+                BRANCH(!O_TSC) {
+                    CONCAT [O_SEEN, O_RNAME] O_SEEN;
+                    CONCAT [O_SEEN, PIPE] O_SEEN;
+                }
+            }
+            ELSE {
+                // check if filename already seen (first occurrence wins)
+                TEXT PIPE O_WFNAME PIPE AS O_WNEEDLE;
+                CONTAINS [O_SEEN, O_WNEEDLE] O_WSEEN;
+                CLONE O_WSEEN AS OWSC;
+                BRANCH(!OWSC) {
+                    // new filename — record in map and dedup tracker
+                    CONCAT [O_SEEN, O_WFNAME] O_SEEN;
+                    CONCAT [O_SEEN, PIPE] O_SEEN;
 
-                TO_STRING [O_WIDX, NULL] O_WIDX_S;
-                CONCAT [O_FILE_MAP, O_WFNAME] O_FILE_MAP;
-                CONCAT [O_FILE_MAP, TAB] O_FILE_MAP;
-                CONCAT [O_FILE_MAP, O_WALK] O_FILE_MAP;
-                CONCAT [O_FILE_MAP, TAB] O_FILE_MAP;
-                CONCAT [O_FILE_MAP, O_WIDX_S] O_FILE_MAP;
-                CONCAT [O_FILE_MAP, NL] O_FILE_MAP;
+                    TO_STRING [O_WIDX, NULL] O_WIDX_S;
+                    CONCAT [O_FILE_MAP, O_WFNAME] O_FILE_MAP;
+                    CONCAT [O_FILE_MAP, TAB] O_FILE_MAP;
+                    CONCAT [O_FILE_MAP, O_WALK] O_FILE_MAP;
+                    CONCAT [O_FILE_MAP, TAB] O_FILE_MAP;
+                    CONCAT [O_FILE_MAP, O_WIDX_S] O_FILE_MAP;
+                    CONCAT [O_FILE_MAP, NL] O_FILE_MAP;
+                }
             }
             ADD [O_WIDX, 1] O_WIDX;
         }
@@ -198,20 +218,35 @@ GT [T_WN, 0] T_WALKING;
         BIFURCATE T_WFILES[T_WFNAME, T_WFILES];
         CLONE T_WFNAME AS TWFC;
         BRANCH(TWFC) {
-            TEXT PIPE T_WFNAME PIPE AS T_WNEEDLE;
-            CONTAINS [T_SEEN, T_WNEEDLE] T_WSEEN;
-            CLONE T_WSEEN AS TWSC;
-            BRANCH(!TWSC) {
-                CONCAT [T_SEEN, T_WFNAME] T_SEEN;
-                CONCAT [T_SEEN, PIPE] T_SEEN;
+            STARTSWITH [T_WFNAME, MARKER] T_ISTOMB;
+            CLONE T_ISTOMB AS T_ITC;
+            BRANCH(T_ITC) {
+                // tombstone: shadow the real name so THEIRS treats it as deleted
+                DROP [T_WFNAME, MLEN] T_RNAME;
+                TEXT PIPE T_RNAME PIPE AS T_TNEEDLE;
+                CONTAINS [T_SEEN, T_TNEEDLE] T_TSEEN;
+                CLONE T_TSEEN AS T_TSC;
+                BRANCH(!T_TSC) {
+                    CONCAT [T_SEEN, T_RNAME] T_SEEN;
+                    CONCAT [T_SEEN, PIPE] T_SEEN;
+                }
+            }
+            ELSE {
+                TEXT PIPE T_WFNAME PIPE AS T_WNEEDLE;
+                CONTAINS [T_SEEN, T_WNEEDLE] T_WSEEN;
+                CLONE T_WSEEN AS TWSC;
+                BRANCH(!TWSC) {
+                    CONCAT [T_SEEN, T_WFNAME] T_SEEN;
+                    CONCAT [T_SEEN, PIPE] T_SEEN;
 
-                TO_STRING [T_WIDX, NULL] T_WIDX_S;
-                CONCAT [T_FILE_MAP, T_WFNAME] T_FILE_MAP;
-                CONCAT [T_FILE_MAP, TAB] T_FILE_MAP;
-                CONCAT [T_FILE_MAP, T_WALK] T_FILE_MAP;
-                CONCAT [T_FILE_MAP, TAB] T_FILE_MAP;
-                CONCAT [T_FILE_MAP, T_WIDX_S] T_FILE_MAP;
-                CONCAT [T_FILE_MAP, NL] T_FILE_MAP;
+                    TO_STRING [T_WIDX, NULL] T_WIDX_S;
+                    CONCAT [T_FILE_MAP, T_WFNAME] T_FILE_MAP;
+                    CONCAT [T_FILE_MAP, TAB] T_FILE_MAP;
+                    CONCAT [T_FILE_MAP, T_WALK] T_FILE_MAP;
+                    CONCAT [T_FILE_MAP, TAB] T_FILE_MAP;
+                    CONCAT [T_FILE_MAP, T_WIDX_S] T_FILE_MAP;
+                    CONCAT [T_FILE_MAP, NL] T_FILE_MAP;
+                }
             }
             ADD [T_WIDX, 1] T_WIDX;
         }
@@ -249,8 +284,13 @@ CONFLICTS.DIE();
 
         // default merge result is OURS content
         TEXT "" O_CON AS MERGED;
+        // DOBURY (reset each iteration) flips alive when THEIRS deleted the
+        // file and OURS left it unchanged since BASE — then we record a removal
+        IMPORT ALIVE DOBURY;
+        DOBURY.DIE();
 
-        // look up same filename in THEIRS (ANT_FIND walks their parent chain)
+        // look up same filename in THEIRS (ANT_FIND walks their parent chain;
+        // returns dead if THEIRS has no live version, e.g. they buried it)
         ANT_FIND [FNAME, T_CID] T_CON;
 
         CLONE T_CON AS TCC;
@@ -317,18 +357,54 @@ CONFLICTS.DIE();
                 }
             }
         }
+        ELSE {
+            // THEIRS has no live version of this file — did they bury it?
+            TEXT PIPE FNAME PIPE AS T_HADNEEDLE;
+            CONTAINS [T_SEEN, T_HADNEEDLE] T_HAD;
+            CLONE T_HAD AS T_HADC;
+            BRANCH(T_HADC) {
+                // THEIRS deleted it — three-way delete against BASE
+                ANT_FIND [FNAME, BASE_CID] B_DCON;
+                CLONE B_DCON AS B_DCC;
+                BRANCH(B_DCC) {
+                    STREQ [B_DCON, O_CON] B_DEQ;
+                    CLONE B_DEQ AS B_DEC;
+                    BRANCH(B_DEC) {
+                        // OURS unchanged since BASE — take the deletion
+                        IMPORT ALIVE DBMARK;
+                        BIFURCATE [DBMARK, NULL] DOBURY;
+                    }
+                    // else OURS modified while THEIRS deleted — keep OURS
+                }
+                // else no BASE content — keep OURS
+            }
+        }
 
-        // write merged blob to new chamber
+        // write a tombstone (removal) or the merged blob into the merge chamber
         TO_STRING [WIDX, NULL] WS;
         TEXT CDIR "/" WS AS WBP;
-        WRITE MERGED TO WBP AS V4;
-
-        // add filename to manifest (with newline separator if not first)
-        CLONE MANIFEST AS MMC;
-        BRANCH(MMC) {
-            CONCAT [MANIFEST, NL] MANIFEST;
+        CLONE DOBURY AS DBC;
+        BRANCH(DBC) {
+            // record a removal: empty blob + marked manifest entry
+            TEXT "" AS DEMPTY;
+            WRITE DEMPTY TO WBP AS V4;
+            CLONE MANIFEST AS MMC;
+            BRANCH(MMC) {
+                CONCAT [MANIFEST, NL] MANIFEST;
+            }
+            TEXT "" MARKER AS DTOMB;
+            CONCAT [DTOMB, FNAME] DTOMB;
+            CONCAT [MANIFEST, DTOMB] MANIFEST;
         }
-        CONCAT [MANIFEST, FNAME] MANIFEST;
+        ELSE {
+            WRITE MERGED TO WBP AS V4;
+            // add filename to manifest (with newline separator if not first)
+            CLONE MANIFEST AS MMC;
+            BRANCH(MMC) {
+                CONCAT [MANIFEST, NL] MANIFEST;
+            }
+            CONCAT [MANIFEST, FNAME] MANIFEST;
+        }
         // increment blob counter
         ADD [WIDX, 1] WIDX;
     }
@@ -391,11 +467,25 @@ IMPORT NUMBER 0 AS RIDX;
     BIFURCATE RFILES[RFNAME, RFILES];
     CLONE RFNAME AS RFC;
     BRANCH(RFC) {
-        // read blob from merge chamber and write to working tree
-        TO_STRING [RIDX, NULL] RIDX_S;
-        TEXT CDIR "/" RIDX_S AS RBP;
-        READ RBP AS RCON;
-        WRITE RCON TO RFNAME AS V11;
+        STARTSWITH [RFNAME, MARKER] R_ISTOMB;
+        CLONE R_ISTOMB AS R_ITC;
+        BRANCH(R_ITC) {
+            // tombstone: remove the real file instead of writing a blob
+            DROP [RFNAME, MLEN] R_RNAME;
+            EXISTS R_RNAME AS R_RE;
+            CLONE R_RE AS R_REC;
+            BRANCH(R_REC) {
+                READ R_RNAME AS R_DEADF;
+                R_DEADF.DIE();
+            }
+        }
+        ELSE {
+            // read blob from merge chamber and write to working tree
+            TO_STRING [RIDX, NULL] RIDX_S;
+            TEXT CDIR "/" RIDX_S AS RBP;
+            READ RBP AS RCON;
+            WRITE RCON TO RFNAME AS V11;
+        }
         ADD [RIDX, 1] RIDX;
     }
 }

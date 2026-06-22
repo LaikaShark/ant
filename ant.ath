@@ -3,6 +3,7 @@
 
 IMPORTF "ant_hatch.ath" AS ANT_HATCH;
 IMPORTF "ant_collect.ath" AS ANT_COLLECT;
+IMPORTF "ant_bury.ath" AS ANT_BURY;
 IMPORTF "ant_dig.ath" AS ANT_DIG;
 IMPORTF "ant_log.ath" AS ANT_LOG;
 IMPORTF "ant_fission.ath" AS ANT_FISSION;
@@ -22,7 +23,7 @@ BRANCH(ARGS) {
 }
 ELSE {
     PRINT usage: ant <command> [args];
-    PRINT commands: hatch collect dig log fission tunnel diff splice transplant status deliver gather;
+    PRINT commands: hatch collect bury dig log fission tunnel diff splice transplant status deliver gather;
     THIS.DIE();
 }
 
@@ -41,6 +42,14 @@ STREQ [CMD, S] V;
 BRANCH(V) {
     BIFURCATE REST[ARG1, MORE];
     ANT_COLLECT [ARG1, MORE] R;
+    THIS.DIE();
+}
+
+TEXT "bury" AS S;
+STREQ [CMD, S] V;
+BRANCH(V) {
+    BIFURCATE REST[ARG1, MORE];
+    ANT_BURY [ARG1, MORE] R;
     THIS.DIE();
 }
 
@@ -133,5 +142,5 @@ BRANCH(V) {
 }
 
 PRINT unknown command: $CMD;
-PRINT commands: hatch collect dig log fission tunnel diff splice transplant status deliver gather trail;
+PRINT commands: hatch collect bury dig log fission tunnel diff splice transplant status deliver gather trail;
 THIS.DIE();

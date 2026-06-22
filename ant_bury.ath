@@ -1,0 +1,92 @@
+// ant bury <file> — stop tracking a file and remove it from the working tree
+//
+// inverse of collect. stages a tombstone (".ant-bury/<file>") into
+// .ant/forage so the next dig records the removal, then deletes the
+// working-tree file. the cumulative-snapshot walk treats a tombstone as
+// "name seen, but absent", so the file drops out of every future
+// snapshot, branch switch, merge, and clone.
+//
+// any pending plain entry for the same file is dropped from the forage
+// (un-stages a queued add); the file is deleted via READ + .DIE() — the
+// runtime unlinks a still-alive owned path when the object dies.
+//
+// ARGS = [FILENAME, _]
+
+IMPORTF <streq> AS STREQ;
+IMPORTF <concat> AS CONCAT;
+IMPORTF <split> AS SPLIT;
+IMPORTF <trim> AS TRIM;
+IMPORTF <length> AS LENGTH;
+IMPORTF <startswith> AS STARTSWITH;
+
+BIFURCATE ARGS[FNAME, JUNK];
+
+// reserved-prefix guard: never track ".ant-bury/..." or ".ant/..."
+TEXT ".ant-bury/" AS MARKER;
+TEXT ".ant/" AS ANTDIR;
+STARTSWITH [FNAME, MARKER] BADM;
+CLONE BADM AS BADMC;
+BRANCH(BADMC) {
+    PRINT refusing reserved path: $FNAME;
+    THIS.DIE();
+}
+STARTSWITH [FNAME, ANTDIR] BADA;
+CLONE BADA AS BADAC;
+BRANCH(BADAC) {
+    PRINT refusing reserved path: $FNAME;
+    THIS.DIE();
+}
+
+// tombstone forage line = MARKER + FNAME
+TEXT "" MARKER AS TOMB;
+CONCAT [TOMB, FNAME] TOMB;
+
+// read current forage pile
+READ ".ant/forage" AS PILE;
+TRIM [PILE, NULL] PILE;
+
+TEXT "\n" AS NL;
+SPLIT [PILE, NL] LINES;
+
+// rebuild pile, dropping any pending plain add of FNAME and any existing
+// identical tombstone (so re-burying is idempotent)
+TEXT "" AS NEWPILE;
+~ATH(LINES) {
+    BIFURCATE LINES[LINE, LINES];
+    LENGTH [LINE, NULL] LLEN;
+    BRANCH(LLEN) {
+        STREQ [LINE, FNAME] ISADD;
+        STREQ [LINE, TOMB] ISDUP;
+        CLONE ISADD AS ISADDC;
+        BRANCH(!ISADDC) {
+            CLONE ISDUP AS ISDUPC;
+            BRANCH(!ISDUPC) {
+                CLONE NEWPILE AS NPC;
+                BRANCH(NPC) {
+                    CONCAT [NEWPILE, NL] NEWPILE;
+                }
+                CONCAT [NEWPILE, LINE] NEWPILE;
+            }
+        }
+    }
+}
+
+// append the tombstone entry
+CLONE NEWPILE AS NPC2;
+BRANCH(NPC2) {
+    CONCAT [NEWPILE, NL] NEWPILE;
+}
+CONCAT [NEWPILE, TOMB] NEWPILE;
+
+WRITE NEWPILE TO ".ant/forage" AS V;
+
+// delete the working-tree file (READ binds an owned path; .DIE unlinks it)
+EXISTS FNAME AS FEX;
+CLONE FEX AS FEXC;
+BRANCH(FEXC) {
+    READ FNAME AS DEADF;
+    DEADF.DIE();
+}
+
+PRINT buried: $FNAME;
+THIS.DIE();
